@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+artifacts/
+group_nicknames.csv
+panel_config.json
