@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 from pathlib import Path
 
@@ -531,6 +532,17 @@ def _contact_rows(lines: list[open_group.OcrLine], image: Image.Image) -> list[o
     return rows
 
 
+def contact_identifier(lines: list[open_group.OcrLine], image: Image.Image) -> str | None:
+    """Read the visible profile identifier used to reject unchanged details."""
+    for line in lines:
+        if line.left < round(image.width * 0.42):
+            continue
+        match = re.search(r"(?:Weixin\s*ID|微信号)\s*[:：]\s*(\S+)", line.text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
 def expand_contacts(
     window: dict[str, object], directory: Path, tesseract: Path
 ) -> bool:
@@ -574,6 +586,7 @@ def save_contact_detail_pages(
     outputs: list[str] = []
     limit = maximum or MAX_PAGES
     seen: set[str] = set()
+    seen_identifiers: set[str] = set()
     for _page in range(MAX_PAGES):
         if len(outputs) >= limit:
             return outputs, "maximum_contacts"
@@ -602,8 +615,18 @@ def save_contact_detail_pages(
             )
             open_group.click_screen_point(point)
             time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
+            candidate = directory / ".contact-candidate.png"
+            candidate_image, _ = capture_live_window(window, candidate)
+            candidate_lines = open_group.run_ocr(
+                tesseract, candidate, psm=11, language="chi_sim+eng"
+            )
+            identifier = contact_identifier(candidate_lines, candidate_image)
+            if identifier is None or identifier in seen_identifiers:
+                candidate.unlink(missing_ok=True)
+                continue
+            seen_identifiers.add(identifier)
             output = directory / f"contact-{len(outputs) + 1:03d}.png"
-            capture_live_window(window, output)
+            candidate.replace(output)
             outputs.append(str(output.resolve()))
             if len(outputs) >= limit:
                 return outputs, "maximum_contacts"
@@ -800,6 +823,8 @@ def main() -> int:
         if not expand_contacts(window, args.o, tesseract):
             print("未找到或无法展开 Contacts/联系人分区。")
             return 3
+        for stale in args.o.glob("contact-*.png"):
+            stale.unlink(missing_ok=True)
         outputs, stop_reason = save_contact_detail_pages(window, args.o, args.s, tesseract)
         emit_result(
             args.o,

@@ -212,6 +212,7 @@ def run_ocr(
         check=False,
         encoding="utf-8",
         errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"tesseract exited {result.returncode}")
