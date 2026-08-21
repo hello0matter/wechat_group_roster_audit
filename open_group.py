@@ -184,14 +184,19 @@ def resolve_tesseract(value: Path | None) -> Path | None:
     return Path(executable) if executable else None
 
 
-def run_ocr(tesseract: Path, image: Path, psm: int = 11) -> list[OcrLine]:
+def run_ocr(
+    tesseract: Path,
+    image: Path,
+    psm: int = 11,
+    language: str = "chi_sim+eng",
+) -> list[OcrLine]:
     result = subprocess.run(
         [
             str(tesseract),
             str(image),
             "stdout",
             "-l",
-            "chi_sim+eng",
+            language,
             "--psm",
             str(psm),
             "tsv",
@@ -215,10 +220,27 @@ def gui_thread_handles() -> tuple[int, int, int]:
 
 
 def click_screen_point(point: tuple[int, int]) -> None:
-    win32api.SetCursorPos(point)
+    set_cursor_pos(point)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
     time.sleep(0.06)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+
+def set_cursor_pos(point: tuple[int, int]) -> None:
+    """Move the cursor with a Win32 fallback for pywin32 SetCursorPos failures."""
+    x, y = map(int, point)
+    try:
+        win32api.SetCursorPos((x, y))
+        return
+    except (OSError, win32api.error):
+        pass
+    if not ctypes.windll.user32.SetCursorPos(x, y):
+        # SendInput works in sessions where SetCursorPos is denied by the UI broker.
+        width = max(1, ctypes.windll.user32.GetSystemMetrics(0) - 1)
+        height = max(1, ctypes.windll.user32.GetSystemMetrics(1) - 1)
+        move = MOUSEINPUT(round(x * 65535 / width), round(y * 65535 / height), 0, 0x0001 | 0x8000, 0, 0)
+        if ctypes.windll.user32.SendInput(1, ctypes.byref(INPUT(type=0, mi=move)), ctypes.sizeof(INPUT)) != 1:
+            raise ctypes.WinError()
 
 
 def select_all() -> None:

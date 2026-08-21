@@ -1,5 +1,11 @@
 __pycache__/
 *.py[cod]
 artifacts/
+build/
+dist/
+portable/
+WechatRosterGUI.spec
+uia_backup_runner.spec
+gui_config.json
 group_nicknames.csv
 panel_config.json

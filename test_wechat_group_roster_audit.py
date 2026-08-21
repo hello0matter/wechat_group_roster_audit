@@ -1,3 +1,4 @@
+import json
 import unittest
 import ctypes
 from pathlib import Path
@@ -366,6 +367,27 @@ class QuickCaptureTests(unittest.TestCase):
             path.write_text('{"target_pid": 0}', encoding="utf-8")
             self.assertEqual(quick_capture.configured_pid(path), (None, "invalid"))
 
+    @patch("quick_capture.audit.visible_weixin_windows")
+    def test_auto_selects_only_running_weixin_when_config_pid_is_stale(self, visible_windows):
+        visible_windows.return_value = [{"pid": 26764}]
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "panel.json"
+            path.write_text('{"target_pid": 6800}', encoding="utf-8")
+
+            self.assertEqual(
+                quick_capture.select_pid(None, path),
+                (26764, "auto_single_window:matched"),
+            )
+
+    @patch("quick_capture.audit.visible_weixin_windows")
+    def test_does_not_guess_when_multiple_weixin_windows_exist(self, visible_windows):
+        visible_windows.return_value = [{"pid": 26764}, {"pid": 30001}]
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "panel.json"
+            path.write_text('{"target_pid": 6800}', encoding="utf-8")
+
+            self.assertEqual(quick_capture.select_pid(None, path), (6800, str(path.resolve())))
+
     def test_builds_timestamped_output(self):
         now = quick_capture.datetime(2026, 8, 7, 22, 30, 45, 123456)
         self.assertEqual(
@@ -432,7 +454,37 @@ class WxCommandTests(unittest.TestCase):
         self.assertEqual(args.m, "chat")
         self.assertFalse(args.f)
         self.assertFalse(args.n)
-        self.assertEqual(args.s, 1)
+        self.assertIsNone(args.s)
+
+    def test_persists_a_result_next_to_the_captured_pages(self):
+        with TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            payload = {"ok": True, "stop_reason": "left_saved_groups"}
+            with patch("builtins.print") as print_result:
+                wx.emit_result(output_dir, payload)
+
+            self.assertEqual(
+                json.loads((output_dir / "result.json").read_text(encoding="utf-8")),
+                payload,
+            )
+            print_result.assert_called_once()
+
+    def test_saved_groups_launcher_uses_the_scoped_capture_command(self):
+        launcher = Path("capture_saved_groups.cmd").read_text(encoding="utf-8")
+        self.assertIn('wx.py -m saved -n -o "%OUTPUT%"', launcher)
+        self.assertIn('result.json', launcher)
+
+    def test_contacts_navigation_uses_the_calibrated_sidebar_position(self):
+        self.assertEqual(wx.point_in_window({"left": 500, "top": 262, "width": 1344, "height": 1031}, wx.CONTACTS_NAV), (556, 484))
+
+    @patch("wx.audit.visible_weixin_windows")
+    def test_auto_selects_only_running_weixin_when_config_pid_is_stale(self, visible_windows):
+        visible_windows.return_value = [{"pid": 26764}]
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "panel.json"
+            path.write_text('{"target_pid": 6800}', encoding="utf-8")
+
+            self.assertEqual(wx.select_pid(None, path), (26764, "auto_single_window:matched"))
 
     def test_search_waits_keep_no_ocr_path_faster(self):
         self.assertLess(
@@ -440,16 +492,69 @@ class WxCommandTests(unittest.TestCase):
             wx.SEARCH_RESULT_WAIT_OCR_SECONDS,
         )
 
-    def test_saved_group_search_scrolls_to_top_before_scanning(self):
+    def test_group_scroll_is_faster_than_the_previous_fixed_delay(self):
+        self.assertEqual(wx.LIST_SCROLL_DELTA, -12000)
+        self.assertLess(wx.LIST_SCROLL_SETTLE_SECONDS, 0.65)
+        self.assertEqual(wx.LIST_TOP_SCROLL_STEPS, 3)
+
+    @patch("wx.scroll_list")
+    @patch("wx.open_group.run_ocr")
+    @patch("wx.capture_live_window")
+    def test_saved_capture_uses_english_ocr_for_section_boundaries(
+        self, capture_live_window, run_ocr, _scroll_list
+    ):
+        with TemporaryDirectory() as directory:
+            capture_live_window.return_value = (
+                audit.Image.new("RGB", (1000, 800), "white"),
+                {"source": "screen"},
+            )
+            run_ocr.return_value = [
+                open_group.OcrLine("Saved Groups", 10, 20, 140, 40),
+                open_group.OcrLine("Official Accounts", 10, 100, 150, 120),
+            ]
+
+            wx.save_saved_group_pages(
+                {"left": 0, "top": 0, "width": 1000, "height": 800},
+                Path(directory),
+                1,
+                Path("tesseract"),
+            )
+
+            self.assertEqual(
+                run_ocr.call_args.kwargs, {"psm": 11, "language": "eng"}
+            )
+
+    def test_saved_group_search_expands_before_scanning(self):
         source = Path(wx.__file__).read_text(encoding="utf-8")
         saved_search_branch = source.index("if saved_group_search:")
-        top_reset = source.index("scroll_list_to_top(window)", saved_search_branch)
-        scan = source.index("find_saved_group(", top_reset)
-        self.assertLess(top_reset, scan)
+        expand = source.index("expand_saved_groups(window, tesseract, args.o)", saved_search_branch)
+        scan = source.index("find_saved_group(", expand)
+        self.assertLess(expand, scan)
 
     def test_short_options(self):
         args = wx.parser().parse_args(["-m", "saved", "-f", "-q", "alice", "-n", "-s", "3"])
         self.assertEqual((args.m, args.f, args.q, args.n, args.s), ("saved", True, "alice", True, 3))
+
+    def test_page_comparison_stops_for_nearly_identical_frames(self):
+        previous = audit.Image.new("RGB", (100, 100), "white")
+        identical = previous.copy()
+        changed = previous.copy()
+        changed.paste("black", (0, 0, 20, 20))
+
+        self.assertFalse(wx.page_changed(previous, identical))
+        self.assertTrue(wx.page_changed(previous, changed))
+
+    def test_detects_a_scrollbar_thumb_at_the_bottom_of_the_list(self):
+        image = audit.Image.new("RGB", (100, 100), "white")
+        image.paste("#a6a6a7", (90, 88, 94, 100))
+
+        self.assertTrue(wx.scrollbar_reached_bottom(image))
+
+    def test_does_not_treat_a_mid_list_scrollbar_thumb_as_the_bottom(self):
+        image = audit.Image.new("RGB", (100, 100), "white")
+        image.paste("#a6a6a7", (90, 35, 94, 52))
+
+        self.assertFalse(wx.scrollbar_reached_bottom(image))
 
     def test_saved_search_is_limited_by_page_count(self):
         args = wx.parser().parse_args(["-m", "saved", "-q", "Target", "-s", "4"])
@@ -484,6 +589,74 @@ class WxCommandTests(unittest.TestCase):
             wx.find_saved_group_result(lines, "Target", True),
             (lines[0], True),
         )
+
+    def test_finds_saved_group_heading(self):
+        lines = [
+            open_group.OcrLine("Y Saved Groups", 10, 20, 120, 40),
+            open_group.OcrLine("Target", 20, 60, 100, 80),
+        ]
+        self.assertEqual(wx.saved_group_heading(lines), lines[0])
+
+    def test_recognizes_chinese_section_headings(self):
+        self.assertEqual(wx.section_kind("保存的群聊"), "saved_groups")
+        self.assertEqual(wx.section_kind("公众号与视频号"), "official_accounts")
+        self.assertEqual(wx.section_kind("联系人"), "contacts")
+
+    @patch("wx.scroll_list")
+    @patch("wx.open_group.run_ocr")
+    @patch("wx.capture_live_window")
+    def test_saved_capture_stops_before_contacts_section(
+        self, capture_live_window, run_ocr, scroll_list
+    ):
+        with TemporaryDirectory() as directory:
+            capture_live_window.return_value = (
+                audit.Image.new("RGB", (1000, 800), "white"),
+                {"source": "screen"},
+            )
+            run_ocr.return_value = [
+                open_group.OcrLine("Saved Groups", 10, 20, 140, 40),
+                open_group.OcrLine("One Group", 20, 60, 150, 80),
+                open_group.OcrLine("Contacts", 10, 100, 120, 120),
+            ]
+
+            outputs, stop_reason = wx.save_saved_group_pages(
+                {"left": 0, "top": 0, "width": 1000, "height": 800},
+                Path(directory),
+                10,
+                Path("tesseract"),
+            )
+
+            self.assertEqual(stop_reason, "left_saved_groups")
+            self.assertEqual(len(outputs), 1)
+            self.assertTrue(Path(outputs[0]).is_file())
+            scroll_list.assert_not_called()
+
+    @patch("wx.scroll_list")
+    @patch("wx.open_group.run_ocr")
+    @patch("wx.capture_live_window")
+    def test_saved_capture_keeps_a_collapsed_saved_groups_section_visible(
+        self, capture_live_window, run_ocr, scroll_list
+    ):
+        with TemporaryDirectory() as directory:
+            capture_live_window.return_value = (
+                audit.Image.new("RGB", (1000, 800), "white"),
+                {"source": "screen"},
+            )
+            run_ocr.return_value = [
+                open_group.OcrLine("Saved Groups", 10, 20, 140, 40),
+                open_group.OcrLine("Official Accounts", 10, 100, 150, 120),
+            ]
+
+            outputs, stop_reason = wx.save_saved_group_pages(
+                {"left": 0, "top": 0, "width": 1000, "height": 800},
+                Path(directory),
+                10,
+                Path("tesseract"),
+            )
+
+            self.assertEqual(stop_reason, "left_saved_groups")
+            self.assertEqual(len(outputs), 1)
+            scroll_list.assert_not_called()
 
     def test_saved_group_search_stops_at_next_contacts_section(self):
         lines = [
@@ -520,6 +693,12 @@ class WxCommandTests(unittest.TestCase):
         cropped, offset = wx.crop_left_pane(image)
         self.assertEqual(offset, (65, 28))
         self.assertEqual(cropped.size, (295, 740))
+
+    def test_maps_full_capture_coordinates_to_the_live_window(self):
+        window = {"left": 677, "top": 209, "width": 1344, "height": 1138}
+        image = audit.Image.new("RGB", (672, 569), "white")
+
+        self.assertEqual(wx.screen_point_from_capture(window, image, 106, 140), (889, 489))
 
     @patch("wx.open_group.run_ocr")
     def test_verifies_target_in_opened_chat_header(self, run_ocr):
@@ -591,7 +770,7 @@ class WxCommandTests(unittest.TestCase):
             image = audit.Image.new("RGB", (100, 100), "red")
             live_capture.return_value = (image, {"source": "screen"})
 
-            outputs = wx.save_visible_pages(
+            outputs, stop_reason = wx.save_visible_pages(
                 {"left": 0, "top": 0, "width": 100, "height": 100},
                 Path(directory),
                 1,
@@ -599,8 +778,37 @@ class WxCommandTests(unittest.TestCase):
             )
 
             self.assertEqual(len(outputs), 1)
+            self.assertEqual(stop_reason, "maximum_pages")
             live_capture.assert_called_once()
             full_capture.assert_not_called()
+
+    @patch("wx.scroll_list")
+    @patch("wx.capture_live_window")
+    @patch("wx.capture_full_window")
+    def test_auto_capture_stops_without_saving_the_duplicate_bottom_page(
+        self,
+        full_capture,
+        live_capture,
+        scroll_list,
+    ):
+        with TemporaryDirectory() as directory:
+            image = audit.Image.new("RGB", (100, 100), "red")
+            full_capture.return_value = (image, {"source": "window"})
+            live_capture.return_value = (image, {"source": "screen"})
+
+            outputs, stop_reason = wx.save_visible_pages(
+                {"left": 0, "top": 0, "width": 100, "height": 100},
+                Path(directory),
+                None,
+                live=False,
+            )
+
+            self.assertEqual(len(outputs), 1)
+            self.assertEqual(stop_reason, "page_unchanged")
+            self.assertTrue(Path(outputs[0]).is_file())
+            full_capture.assert_called_once()
+            live_capture.assert_called_once()
+            scroll_list.assert_called_once()
 
     @patch("wx.open_group.desktop_window_capture")
     def test_live_capture_uses_current_desktop_frame(self, desktop_capture):

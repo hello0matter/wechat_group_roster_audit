@@ -36,9 +36,11 @@ USER32 = ctypes.windll.user32
 
 import psutil
 import win32con
+import win32api
 import win32gui
 import win32process
 import win32ui
+import pywintypes
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageGrab
@@ -166,9 +168,41 @@ def activate_window(window: dict[str, object]) -> dict[str, object]:
     hwnd = int(window["hwnd"])
     was_hidden = not bool(win32gui.IsWindowVisible(hwnd))
     was_minimized = bool(win32gui.IsIconic(hwnd))
+    # A visible foreground WeChat surface is already usable. Touching its Qt
+    # window state can blank the content layer, so leave it completely alone.
+    if "width" in window and not was_hidden and not was_minimized and win32gui.GetForegroundWindow() == hwnd:
+        return {
+            "activated": True,
+            "was_hidden": False,
+            "was_minimized": False,
+            "input_threads_attached": False,
+            "window": dict(window),
+        }
+    # For a visible normal WeChat window, activate it by clicking its title bar
+    # instead of changing Qt window state. This avoids the white-surface bug.
+    if "width" in window and not was_hidden and not was_minimized:
+        left, top, right, _ = map(int, win32gui.GetWindowRect(hwnd))
+        point = (left + max(20, min((right - left) // 2, 300)), top + 18)
+        try:
+            win32api.SetCursorPos(point)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+            time.sleep(0.25)
+        except (OSError, win32api.error):
+            pass
+        if win32gui.GetForegroundWindow() == hwnd:
+            return {
+                "activated": True,
+                "was_hidden": False,
+                "was_minimized": False,
+                "input_threads_attached": False,
+                "window": dict(window),
+            }
     if was_minimized:
-        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        time.sleep(0.15)
+        # Qt/Weixin is sensitive to repeated restore/maximize calls. Send one
+        # native restore command and leave its previous size/state untouched.
+        USER32.PostMessageW(hwnd, win32con.WM_SYSCOMMAND, win32con.SC_RESTORE, 0)
+        time.sleep(0.8)
     elif was_hidden:
         win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
         time.sleep(0.15)
@@ -182,27 +216,9 @@ def activate_window(window: dict[str, object]) -> dict[str, object]:
         if foreground_thread and foreground_thread != target_thread:
             attached = bool(USER32.AttachThreadInput(foreground_thread, target_thread, True))
         USER32.BringWindowToTop(hwnd)
-        win32gui.SetWindowPos(
-            hwnd,
-            win32con.HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW,
-        )
         USER32.SetForegroundWindow(hwnd)
         USER32.SetFocus(hwnd)
         time.sleep(0.25)
-        win32gui.SetWindowPos(
-            hwnd,
-            win32con.HWND_NOTOPMOST,
-            0,
-            0,
-            0,
-            0,
-            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW,
-        )
         foreground_after_raise = win32gui.GetForegroundWindow()
         if foreground_after_raise != hwnd:
             # Windows can reject the first foreground request while another process owns focus.
@@ -214,8 +230,20 @@ def activate_window(window: dict[str, object]) -> dict[str, object]:
     finally:
         if attached:
             USER32.AttachThreadInput(foreground_thread, target_thread, False)
-    current = visible_weixin_windows(int(window["pid"]))
-    refreshed = current[0] if current else window
+    # Re-read the restored rectangle directly. GetWindowPlacement can retain
+    # minimized coordinates for a short period and produce a 0x0/11px window.
+    try:
+        left, top, right, bottom = map(int, win32gui.GetWindowRect(hwnd))
+        width, height = right - left, bottom - top
+    except win32gui.error:
+        width = height = 0
+    refreshed = dict(window)
+    if width >= 450 and height >= 350:
+        refreshed.update(left=left, top=top, width=width, height=height, minimized=False, visible=True)
+    else:
+        current = visible_weixin_windows(int(window["pid"]))
+        if current and ("width" not in current[0] or int(current[0].get("width", 0)) >= 450):
+            refreshed = current[0]
     return {
         "activated": foreground_after_raise == hwnd,
         "was_hidden": was_hidden,

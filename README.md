@@ -26,8 +26,9 @@
 python quick_capture.py
 ```
 
-微信完全退出再启动后 PID 会变化。此时一键脚本会明确报错；先用 `--list-windows`
-取得当前 PID，再对目标窗口重新运行一次 `--calibrate-panel`，不会自动猜测其他账号。
+微信完全退出再启动后 PID 会变化。日常脚本在系统中仅有一个微信主窗口时会自动使用
+新 PID；若检测到多个账号窗口，仍会拒绝猜测并要求传入 `-p PID`，避免操作错账号。
+面板比例仍保留原校准值；窗口尺寸或布局变化时，应重新运行一次 `--calibrate-panel`。
 
 按完整群名搜索并打开一个群聊：
 
@@ -48,7 +49,12 @@ python wx.py -q "Codex交流群2"
 # 不 OCR，只输入搜索词并截图（最快）
 python wx.py -q "Codex交流群2" -n
 
-# 通讯录 Saved Groups，保存 3 张向下滚动后的可见页截图
+# 通讯录 Saved Groups，只截图该分区；离开分区即停止
+python wx.py -m saved -n
+
+# 双击 capture_saved_groups.cmd 也会执行上一条命令，并创建单独的时间戳输出目录
+
+# 最多保存 3 张；这是保护上限，提前到底会自动停止
 python wx.py -m saved -n -s 3
 
 # 在最多 5 个保存群列表页面内 OCR 查找并选中一个群资料，保存右侧预览
@@ -60,14 +66,28 @@ python wx.py -f -q "小张"
 
 # 通讯录好友模式，不 OCR
 python wx.py -m saved -f -q "小张" -n
+
+# 使用 pywechat2 UIA 点击联系人并保存右侧资料截图（默认最多 10 个）
+python uia_backup.py -s 10 -o artifacts/uia-contacts
+
+# 点击保存的群聊条目并保存当前窗口截图
+python uia_backup.py --groups -s 10 -o artifacts/uia-saved-groups
 ```
 
 参数：`-m chat|saved` 选择来源（默认 `chat`），默认目标是群，`-f` 切换好友，
-`-q` 指定单个搜索词，`-n` 跳过 OCR，`-s N` 保存 N 张滚动后的可见页截图，`-o`
-指定输出目录。`-m saved -q` 会在最多 `-s` 个保存群列表页面内识别单个群名或可见唯一片段；
-该页面没有独立搜索框，因此这种组合不能加 `-n`；每次查询会先回到保存群列表顶部，且会对
-分类内的群名文字区域局部放大后 OCR。跨页时会在离开“保存的群聊”分类后停止，不会继续匹配公众号或通讯录。`Saved Groups` 中的条目可能只是保存的群资料；此模式只选中条目并保存右侧预览，绝不会自动点 `Join Group`。无查询词时，多页截图只保存左侧列表区域，并按接近一页的
-距离滚动。搜索或多页滚动后的截图使用当前桌面画面，避免新版微信的 `PrintWindow`
+`-q` 指定单个搜索词，`-n` 跳过 OCR，`-s N` 是可选的截图上限，`-o` 指定输出目录。无
+`-s` 时，截图会自动持续向下滚动，滚动条到底或列表不再变化时停止；`-m saved` 会先把
+通讯录左栏回到顶部，并额外
+限制在 `Saved Groups` 分区，进入普通联系人、公众号等下一分区时立即停止。内部仍有 1000 页
+保护上限。输出中的 `stop_reason` 会说明是滚动条到底（`scrollbar_bottom`）、页面未变化
+（`page_unchanged`）还是触发保护上限
+（`maximum_pages`）。每次运行还会在输出目录写入 `result.json`，即使外部终端提前断开也可
+查看最终页数与停止原因。
+`-m saved -q` 会在最多 `-s` 个保存群列表页面内识别单个群名或可见唯一片段；未填写
+`-s` 时该上限同样为 1000；
+该页面没有独立搜索框，因此这种组合不能加 `-n`；每次查询会先回到保存群列表顶部、展开
+`Saved Groups`/“保存的群聊”分区，且会对
+分类内的群名文字区域局部放大后 OCR。跨页时会在离开“保存的群聊”分类后停止，不会继续匹配公众号或通讯录。`Saved Groups` 中的条目可能只是保存的群资料；此模式只选中条目并保存右侧预览，绝不会自动点 `Join Group`。无查询词时，`-m saved` 也只用 OCR 判断分区边界，输出只保留该分区的截图；它不会识别或导出条目资料。滚动等待为 0.25 秒并采用更大滚动距离。搜索或多页滚动后的截图使用当前桌面画面，避免新版微信的 `PrintWindow`
 返回交互前旧帧；无查询的单页 `-n` 使用更快的窗口直出截图。无 OCR 搜索默认只等待
 结果栏稳定所需的短时段，不会点击
 搜索结果。`-m chat` 的 OCR 精确模式会输出 `clicked: true`，并通过 `title_verified`
@@ -75,6 +95,40 @@ python wx.py -m saved -f -q "小张" -n
 `join_required`；它不会自动加入群。两种模式都保留 `opened_screenshot` 供人工确认。
 当 `preview_state` 为 `join_group` 时，右侧绿色按钮表示该群资料尚未加入；脚本只记录
 状态，绝不自动点击该按钮。
+
+微信重启后通常不需要再传旧 PID。直接运行 `python wx.py -n`；只有同时打开多个微信
+账号时才使用 `python wx.py -n -p 当前PID`。注意：`-o` 是输出目录，例如
+`-o artifacts/run-1`；`-s 1` 表示最多只保存一张，不填 `-s` 才是自动到底。
+
+`uia_backup.py` 是可选的 pywechat2 UIA 适配层，不改变 `wx.py` 的 OCR 默认流程。若
+pywechat2 不在当前目录，可设置 `PYWECHAT2_ROOT` 或传 `--pywechat-root`：
+
+```powershell
+$env:PYWECHAT2_ROOT = "D:\tmp\anjian\pj\st\tmp\pywechat2"
+& "$env:PYWECHAT2_ROOT\.venv\Scripts\python.exe" uia_backup.py -s 10
+```
+
+联系人备份会用 OCR 定位通讯录行，逐个打开联系人详情并保存整窗截图；不导出或解析 WXID、微信号、手机号等账号标识。
+群成员详情目前暂未启用，群相关代码只保留列表截图和单群预览流程，GUI 不会误触发群成员操作。
+
+### 跨机器使用与打包
+
+运行 `build_portable.ps1` 会生成 `portable` 目录，里面有：
+
+- `WechatRosterGUI.exe`：图形界面
+- `wechat_backup_runner.exe`：唯一后端运行时，先尝试 UIA，UIA 不可见时自动回退 OCR
+- `pywechat2\`：随包携带的源码和 Git 版本目录
+
+整个 `portable` 目录可以复制到另一台 64 位 Windows 10/11 机器，不要求目标机安装
+Python、pip 或外部 pywechat2 环境。目标机仍必须安装桌面微信、先手动登录，并允许桌面自动化；
+程序不会替用户登录。GUI 的版本更新和切换直接操作包内的 `pywechat2\`，不需要重新打包 EXE。
+截图功能不依赖目标机的 Python；有 Git 时优先使用 Git，无 Git 时 GUI 会通过 GitHub API
+显示版本并下载源码。两种方式都使用代理配置。
+
+便携版的截图按钮使用同目录的 `wechat_backup_runner.exe`，而不是系统 Python。GUI 中的版本
+刷新/更新功能对当前配置的 pywechat2 checkout 执行 Git 操作；默认路径是包内的
+`pywechat2\`。代理配置支持直连、HTTP、SOCKS5，默认
+为 `127.0.0.1:7891`，只用于 Git 更新和依赖下载。
 
 列出当前微信主窗口（包括缩到托盘后隐藏的窗口）：
 

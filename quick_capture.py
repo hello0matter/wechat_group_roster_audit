@@ -26,9 +26,23 @@ def timestamped_output(directory: Path, now: datetime | None = None) -> Path:
     return directory / f"right-panel-{timestamp}.png"
 
 
+def select_pid(explicit_pid: int | None, config: Path) -> tuple[int | None, str]:
+    """Use the configured window when present, or the sole running Weixin window."""
+    if explicit_pid is not None:
+        return explicit_pid, "command_line"
+    pid, status = configured_pid(config)
+    windows = audit.visible_weixin_windows()
+    if pid is not None and any(int(window["pid"]) == pid for window in windows):
+        return pid, str(config.resolve())
+    if len(windows) == 1:
+        return int(windows[0]["pid"]), f"auto_single_window:{status}"
+    return pid, str(config.resolve()) if pid is not None else status
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Capture the calibrated Weixin panel")
     parser.add_argument("--config", type=Path, default=audit.DEFAULT_PANEL_CONFIG)
+    parser.add_argument("-p", "--pid", type=int, help="explicit Weixin PID")
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts"))
     parser.add_argument(
         "--source",
@@ -38,15 +52,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    pid, config_status = configured_pid(args.config)
+    pid, pid_source = select_pid(args.pid, args.config)
     if pid is None:
-        if config_status == "missing":
-            print(f"缺少校准配置 {args.config}。请先运行 --calibrate-panel。")
-        else:
-            print(f"校准配置 {args.config} 已损坏或 target_pid 无效。")
+        print(
+            f"无法确定微信 PID（{pid_source}）。仅一个微信窗口时会自动选择；"
+            "多个账号请传 -p PID。"
+        )
         return 2
 
-    panel, panel_status = audit.read_panel_config(args.config, pid)
+    panel, panel_status = audit.read_panel_config(args.config)
     if panel is None:
         print(f"校准配置 {args.config} 中的面板范围无效（{panel_status}）。")
         return 2
@@ -54,8 +68,7 @@ def main() -> int:
     window = audit.select_weixin_window(pid)
     if window is None:
         print(
-            f"配置中的微信 PID {pid} 已不存在。请运行 "
-            "wechat_group_roster_audit.py --list-windows，选择当前 PID 后重新校准。"
+            f"未找到 PID {pid} 的微信主窗口。请使用 --list-windows 检查当前窗口。"
         )
         return 2
 
@@ -81,6 +94,7 @@ def main() -> int:
             {
                 "captured": True,
                 "target_pid": pid,
+                "pid_source": pid_source,
                 "panel_config": str(args.config.resolve()),
                 "capture": capture,
             },

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import win32api
 import win32con
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 
 import open_group
 import quick_capture
@@ -17,15 +17,23 @@ import wechat_group_roster_audit as audit
 
 
 CHAT_NAV = (0.035, 0.14)
-CONTACTS_NAV = (0.035, 0.205)
+CONTACTS_NAV = (0.042, 0.215)
 SEARCH_FIELD = (0.205, 0.07)
 LIST_SCROLL_POINT = (0.25, 0.72)
 LEFT_PANE = (0.065, 0.035, 0.36, 0.96)
-LIST_SCROLL_DELTA = -4800
+LIST_SCROLL_DELTA = -12000
 LIST_TOP_SCROLL_DELTA = 12000
+LIST_TOP_SCROLL_STEPS = 3
+LIST_SCROLL_SETTLE_SECONDS = 0.25
+CONTACTS_SCROLLBAR_X_RATIO = 0.335
+CONTACTS_SCROLLBAR_THUMB_Y_RATIO = 0.17
+CONTACTS_SCROLLBAR_TOP_Y_RATIO = 0.083
 SAVED_GROUPS_TEXT_LEFT_RATIO = 0.24
 SAVED_GROUPS_TEXT_SCALE = 3
-MAX_PAGES = 20
+MAX_PAGES = 1000
+UNCHANGED_PAGE_MEAN_DIFFERENCE = 0.5
+SCROLLBAR_MIN_NEUTRAL_RUN = 10
+SCROLLBAR_BOTTOM_RATIO = 0.94
 NAVIGATION_WAIT_SECONDS = 0.45
 SEARCH_FOCUS_WAIT_SECONDS = 0.2
 SEARCH_RESULT_WAIT_NO_OCR_SECONDS = 0.55
@@ -34,6 +42,10 @@ JOIN_BUTTON_REGION = (0.55, 0.3, 0.84, 0.56)
 MIN_JOIN_BUTTON_GREEN_PIXELS = 800
 CHAT_OPEN_ATTEMPTS = 2
 CHAT_OPEN_WAIT_SECONDS = 0.8
+CONTACT_DETAIL_WAIT_SECONDS = 0.55
+CONTACT_ROW_MIN_TOP = 90
+CONTACT_ROW_MAX_TOP_RATIO = 0.92
+CONTACT_ROW_MIN_GAP = 18
 
 
 def parser() -> argparse.ArgumentParser:
@@ -44,12 +56,24 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("-f", action="store_true", help="target a friend instead of a group")
     result.add_argument("-q", metavar="TEXT", help="single search text")
     result.add_argument("-n", action="store_true", help="skip OCR; keep results open and screenshot")
-    result.add_argument("-s", type=int, default=1, metavar="N", help="save N visible pages (max 20)")
+    result.add_argument(
+        "-s",
+        type=int,
+        metavar="N",
+        help="maximum screenshots; omit to scroll until the list stops (max 1000)",
+    )
     result.add_argument("-o", type=Path, default=Path("artifacts/wx"))
     result.add_argument("-p", type=int, help="explicit Weixin PID")
     result.add_argument("--config", type=Path, default=audit.DEFAULT_PANEL_CONFIG)
     result.add_argument("--tesseract", type=Path)
     return result
+
+
+def emit_result(directory: Path, payload: dict[str, object]) -> None:
+    """Persist the machine-readable result before writing it to the console."""
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+    (directory / "result.json").write_text(f"{serialized}\n", encoding="utf-8")
+    print(serialized)
 
 
 def point_in_window(
@@ -73,27 +97,44 @@ def crop_left_pane(image: Image.Image) -> tuple[Image.Image, tuple[int, int]]:
     return image.crop(box), (box[0], box[1])
 
 
+def screen_point_from_capture(
+    window: dict[str, object], image: Image.Image, x: int, y: int
+) -> tuple[int, int]:
+    """Map a pixel in a captured Weixin window back to a screen point."""
+    return (
+        int(window["left"]) + round(x * int(window["width"]) / image.width),
+        int(window["top"]) + round(y * int(window["height"]) / image.height),
+    )
+
+
+def left_pane_lines(
+    lines: list[open_group.OcrLine], image: Image.Image
+) -> list[open_group.OcrLine]:
+    """Keep section headings found in the actual Contacts pane, not the preview."""
+    return [line for line in lines if line.left < round(image.width * LEFT_PANE[2])]
+
+
 def section_kind(text: str) -> str | None:
     normalized = open_group.normalize_text(text)
-    if normalized == "mostused":
+    if normalized in {"mostused", "最常使用"}:
         return "most_used"
-    if "group" in normalized and "chat" in normalized:
-        return "groups"
-    if "savedgroup" in normalized:
+    if "savedgroup" in normalized or "保存的群聊" in normalized:
         return "saved_groups"
-    if normalized == "contacts":
+    if ("group" in normalized and "chat" in normalized) or "群聊" in normalized:
+        return "groups"
+    if normalized in {"contacts", "联系人"}:
         return "contacts"
-    if "officialaccounts" in normalized:
+    if "officialaccounts" in normalized or "公众号" in normalized:
         return "official_accounts"
-    if "wecomcontacts" in normalized:
+    if "wecomcontacts" in normalized or "企业微信联系人" in normalized:
         return "wecom_contacts"
-    if "myenterprise" in normalized:
+    if "myenterprise" in normalized or "我的企业" in normalized:
         return "my_enterprise"
-    if "chathistory" in normalized:
+    if "chathistory" in normalized or "聊天记录" in normalized:
         return "chat_history"
-    if "internetsearchresults" in normalized:
+    if "internetsearchresults" in normalized or "互联网搜索结果" in normalized:
         return "internet"
-    if "serviceaccounts" in normalized:
+    if "serviceaccounts" in normalized or "服务号" in normalized:
         return "service_accounts"
     return None
 
@@ -191,6 +232,75 @@ def find_saved_group_result(
     return match, continue_scanning
 
 
+def saved_group_heading(lines: list[open_group.OcrLine]) -> open_group.OcrLine | None:
+    return next((line for line in lines if section_kind(line.text) == "saved_groups"), None)
+
+
+def saved_groups_is_collapsed(
+    lines: list[open_group.OcrLine], heading: open_group.OcrLine
+) -> bool:
+    """Recognize the closed disclosure row without reading any group names."""
+    label = heading.text.lstrip()
+    if label.startswith(">"):
+        return True
+    _, end_top, _ = saved_group_section_bounds(lines, False)
+    return end_top is not None and end_top - heading.bottom < 70
+
+
+def expand_saved_groups(
+    window: dict[str, object],
+    tesseract: Path,
+    directory: Path,
+) -> bool:
+    """Expand the Saved Groups section header without selecting a group entry."""
+    for attempt in range(2):
+        frame = directory / ".saved-groups-expand-frame.png"
+        full_image, _ = capture_live_window(window, frame)
+        frame.unlink(missing_ok=True)
+        ocr_path = directory / ".saved-groups-expand-ocr.png"
+        full_image.save(ocr_path)
+        lines = open_group.run_ocr(tesseract, ocr_path, psm=11, language="chi_sim+eng")
+        ocr_path.unlink(missing_ok=True)
+        lines = left_pane_lines(lines, full_image)
+        heading = saved_group_heading(lines)
+        if heading is not None:
+            break
+        if attempt == 0:
+            scroll_list_to_top(window)
+    else:
+        return False
+
+    if not saved_groups_is_collapsed(lines, heading):
+        return True
+
+    # Click the discovered header row, not a hard-coded disclosure-arrow coordinate.
+    point = screen_point_from_capture(
+        window,
+        full_image,
+        (heading.left + heading.right) // 2,
+        (heading.top + heading.bottom) // 2,
+    )
+    open_group.click_screen_point(point)
+    time.sleep(NAVIGATION_WAIT_SECONDS)
+
+    verification_frame = directory / ".saved-groups-expand-verify-frame.png"
+    verification_image, _ = capture_live_window(window, verification_frame)
+    verification_frame.unlink(missing_ok=True)
+    verification_path = directory / ".saved-groups-expand-verify-ocr.png"
+    verification_image.save(verification_path)
+    verification_lines = open_group.run_ocr(
+        tesseract, verification_path, psm=11, language="chi_sim+eng"
+    )
+    verification_path.unlink(missing_ok=True)
+    verification_lines = left_pane_lines(verification_lines, verification_image)
+    verification_heading = saved_group_heading(verification_lines)
+    return (
+        verification_heading is not None
+        and not saved_groups_is_collapsed(verification_lines, verification_heading)
+        and page_changed(full_image, verification_image)
+    )
+
+
 def find_saved_group_in_expanded_text(
     tesseract: Path,
     image_path: Path,
@@ -228,7 +338,9 @@ def capture_full_window(
     window: dict[str, object],
     output: Path,
 ) -> tuple[Image.Image, dict[str, object]]:
-    image, metadata = audit.capture_window_image(window, "window")
+    # WeChat's Qt surface may reject PrintWindow and return a blank frame.
+    # Auto mode falls back to a desktop capture when the window is visible.
+    image, metadata = audit.capture_window_image(window, "auto")
     output.parent.mkdir(parents=True, exist_ok=True)
     image.save(output)
     return image, metadata
@@ -294,42 +406,235 @@ def click_result_and_verify_chat(
 
 
 def scroll_list(window: dict[str, object]) -> None:
-    win32api.SetCursorPos(point_in_window(window, LIST_SCROLL_POINT))
+    open_group.set_cursor_pos(point_in_window(window, LIST_SCROLL_POINT))
     win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, LIST_SCROLL_DELTA, 0)
-    time.sleep(0.65)
+    time.sleep(LIST_SCROLL_SETTLE_SECONDS)
 
 
 def scroll_list_to_top(window: dict[str, object]) -> None:
     """Return the Contacts list to its first visible entry before a saved-group scan."""
-    win32api.SetCursorPos(point_in_window(window, LIST_SCROLL_POINT))
-    win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, LIST_TOP_SCROLL_DELTA, 0)
-    time.sleep(0.65)
+    open_group.set_cursor_pos(point_in_window(window, LIST_SCROLL_POINT))
+    for _ in range(LIST_TOP_SCROLL_STEPS):
+        win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, LIST_TOP_SCROLL_DELTA, 0)
+        time.sleep(0.1)
+    time.sleep(LIST_SCROLL_SETTLE_SECONDS)
+
+
+def scroll_contacts_to_top(window: dict[str, object]) -> None:
+    """Drag the visible Contacts-list scrollbar thumb to its top position."""
+    start = point_in_window(
+        window, (CONTACTS_SCROLLBAR_X_RATIO, CONTACTS_SCROLLBAR_THUMB_Y_RATIO)
+    )
+    end = point_in_window(
+        window, (CONTACTS_SCROLLBAR_X_RATIO, CONTACTS_SCROLLBAR_TOP_Y_RATIO)
+    )
+    open_group.set_cursor_pos(start)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    time.sleep(0.06)
+    open_group.set_cursor_pos(end)
+    time.sleep(0.12)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    time.sleep(LIST_SCROLL_SETTLE_SECONDS)
+
+
+def page_changed(previous: Image.Image, current: Image.Image) -> bool:
+    """Treat a nearly identical post-scroll list image as the end of the list."""
+    if previous.size != current.size:
+        return True
+    difference = ImageChops.difference(previous.convert("L"), current.convert("L"))
+    return ImageStat.Stat(difference).mean[0] > UNCHANGED_PAGE_MEAN_DIFFERENCE
+
+
+def scrollbar_reached_bottom(image: Image.Image) -> bool:
+    """Detect a list scrollbar thumb resting against the bottom of the left pane."""
+    width, height = image.size
+    start_x = round(width * 0.88)
+    end_x = round(width * 0.96)
+    required_bottom = round(height * SCROLLBAR_BOTTOM_RATIO)
+    for x in range(start_x, end_x):
+        run_start = None
+        for y in range(height):
+            red, green, blue = image.getpixel((x, y))[:3]
+            neutral_thumb = max(red, green, blue) - min(red, green, blue) <= 4 and 80 <= red <= 210
+            if neutral_thumb:
+                run_start = y if run_start is None else run_start
+            elif run_start is not None:
+                if y - run_start >= SCROLLBAR_MIN_NEUTRAL_RUN and y - 1 >= required_bottom:
+                    return True
+                run_start = None
+        if (
+            run_start is not None
+            and height - run_start >= SCROLLBAR_MIN_NEUTRAL_RUN
+            and height - 1 >= required_bottom
+        ):
+            return True
+    return False
 
 
 def save_visible_pages(
     window: dict[str, object],
     directory: Path,
-    count: int,
+    maximum_pages: int | None,
     *,
     live: bool,
-) -> list[str]:
+) -> tuple[list[str], str]:
     outputs = []
-    for index in range(count):
+    previous_page = None
+    page_limit = maximum_pages or MAX_PAGES
+    for index in range(page_limit):
         output = directory / f"page-{index + 1:02d}.png"
-        capture = capture_live_window if live else capture_full_window
-        full_image, _ = capture(window, output)
+        frame = directory / f".page-{index + 1:02d}-frame.png"
+        capture = capture_live_window if live or index else capture_full_window
+        full_image, _ = capture(window, frame)
         list_image, _ = crop_left_pane(full_image)
+        if previous_page is not None and not page_changed(previous_page, list_image):
+            frame.unlink(missing_ok=True)
+            return outputs, "page_unchanged"
         list_image.save(output)
+        frame.unlink(missing_ok=True)
         outputs.append(str(output.resolve()))
-        if index + 1 < count:
+        if scrollbar_reached_bottom(list_image):
+            return outputs, "scrollbar_bottom"
+        previous_page = list_image.copy()
+        if index + 1 < page_limit:
             scroll_list(window)
-    return outputs
+    return outputs, "maximum_pages"
+
+
+def _contact_rows(lines: list[open_group.OcrLine], image: Image.Image) -> list[open_group.OcrLine]:
+    """Return likely contact rows from the left pane, excluding section headings."""
+    rows: list[open_group.OcrLine] = []
+    max_top = round(image.height * CONTACT_ROW_MAX_TOP_RATIO)
+    for line in left_pane_lines(lines, image):
+        text = open_group.normalize_text(line.text)
+        if line.top < CONTACT_ROW_MIN_TOP or line.top > max_top or not text:
+            continue
+        if section_kind(line.text) is not None:
+            continue
+        # Names are in the middle/right of the row; ignore tiny labels at the edge.
+        if line.left < round(image.width * 0.08) or line.left > round(image.width * 0.34):
+            continue
+        if rows and line.top - rows[-1].top < CONTACT_ROW_MIN_GAP:
+            if line.right > rows[-1].right:
+                rows[-1] = line
+            continue
+        rows.append(line)
+    return rows
+
+
+def save_contact_detail_pages(
+    window: dict[str, object],
+    directory: Path,
+    maximum: int | None,
+    tesseract: Path,
+) -> tuple[list[str], str]:
+    """Open contacts one by one and save the resulting detail panel screenshots."""
+    outputs: list[str] = []
+    limit = maximum or MAX_PAGES
+    seen: set[tuple[int, str]] = set()
+    scroll_contacts_to_top(window)
+    for _page in range(MAX_PAGES):
+        if len(outputs) >= limit:
+            return outputs, "maximum_contacts"
+        frame = directory / ".contacts-detail-frame.png"
+        full_image, _ = capture_live_window(window, frame)
+        frame.unlink(missing_ok=True)
+        ocr_path = directory / ".contacts-detail-ocr.png"
+        full_image.save(ocr_path)
+        try:
+            lines = open_group.run_ocr(tesseract, ocr_path, psm=11, language="chi_sim+eng")
+        finally:
+            ocr_path.unlink(missing_ok=True)
+        rows = _contact_rows(lines, full_image)
+        if not rows:
+            return outputs, "contacts_not_detected"
+        new_row = False
+        for row in rows:
+            key = (row.top, open_group.normalize_text(row.text))
+            if key in seen:
+                continue
+            seen.add(key)
+            new_row = True
+            point = screen_point_from_capture(
+                window, full_image, (row.left + row.right) // 2, (row.top + row.bottom) // 2
+            )
+            open_group.click_screen_point(point)
+            time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
+            output = directory / f"contact-{len(outputs) + 1:03d}.png"
+            capture_live_window(window, output)
+            outputs.append(str(output.resolve()))
+            # Return to the contacts list without restoring/maximizing the window.
+            open_group.click_screen_point(point_in_window(window, CONTACTS_NAV))
+            time.sleep(NAVIGATION_WAIT_SECONDS)
+            if len(outputs) >= limit:
+                return outputs, "maximum_contacts"
+        if not new_row:
+            return outputs, "contacts_exhausted"
+        before = full_image
+        scroll_list(window)
+        time.sleep(LIST_SCROLL_SETTLE_SECONDS)
+        after_path = directory / ".contacts-detail-after.png"
+        after, _ = capture_live_window(window, after_path)
+        after_path.unlink(missing_ok=True)
+        if not page_changed(before, after) or scrollbar_reached_bottom(crop_left_pane(after)[0]):
+            # One final visible batch may have been handled; stop at the bottom.
+            return outputs, "scrollbar_bottom"
+    return outputs, "maximum_pages"
+
+
+def save_saved_group_pages(
+    window: dict[str, object],
+    directory: Path,
+    maximum_pages: int,
+    tesseract: Path,
+) -> tuple[list[str], str]:
+    """Save only the visible Saved Groups section, never the general contacts below it."""
+    outputs = []
+    section_started = False
+    section_language = "eng"
+    for index in range(maximum_pages):
+        frame = directory / f".saved-groups-{index + 1:02d}-frame.png"
+        full_image, _ = capture_live_window(window, frame)
+        list_image, _ = crop_left_pane(full_image)
+        frame.unlink(missing_ok=True)
+        ocr_path = directory / f".saved-groups-{index + 1:02d}-ocr.png"
+        list_image.save(ocr_path)
+        lines = open_group.run_ocr(tesseract, ocr_path, psm=11, language=section_language)
+        ocr_path.unlink(missing_ok=True)
+        start_top, end_top, continues = saved_group_section_bounds(lines, section_started)
+        if not section_started and start_top is None:
+            # Determine the UI language once, then reuse it for subsequent pages.
+            section_language = "chi_sim+eng"
+            ocr_path.write_bytes(b"")
+            list_image.save(ocr_path)
+            lines = open_group.run_ocr(tesseract, ocr_path, psm=11, language=section_language)
+            ocr_path.unlink(missing_ok=True)
+            start_top, end_top, continues = saved_group_section_bounds(lines, section_started)
+        if start_top is None:
+            return outputs, "saved_groups_not_visible"
+        section_started = True
+        bottom = list_image.height if end_top is None else end_top
+        if bottom > start_top:
+            output = directory / f"page-{len(outputs) + 1:02d}.png"
+            list_image.crop((0, max(0, start_top), list_image.width, bottom)).save(output)
+            outputs.append(str(output.resolve()))
+        if not continues:
+            return outputs, "left_saved_groups"
+        if scrollbar_reached_bottom(list_image):
+            return outputs, "scrollbar_bottom"
+        scroll_list(window)
+    return outputs, "maximum_pages"
 
 
 def select_pid(explicit_pid: int | None, config: Path) -> tuple[int | None, str]:
     if explicit_pid is not None:
         return explicit_pid, "command_line"
     pid, status = quick_capture.configured_pid(config)
+    windows = audit.visible_weixin_windows()
+    if pid is not None and any(int(window["pid"]) == pid for window in windows):
+        return pid, str(config.resolve())
+    if len(windows) == 1:
+        return int(windows[0]["pid"]), f"auto_single_window:{status}"
     return pid, str(config.resolve()) if pid is not None else status
 
 
@@ -384,7 +689,7 @@ def find_saved_group(
 
 def main() -> int:
     args = parser().parse_args()
-    if not 1 <= args.s <= MAX_PAGES:
+    if args.s is not None and not 1 <= args.s <= MAX_PAGES:
         print(f"-s 必须在 1 到 {MAX_PAGES} 之间。")
         return 2
     if args.m == "saved" and not args.f and args.q is not None and args.n:
@@ -444,28 +749,63 @@ def main() -> int:
         )
 
     args.o.mkdir(parents=True, exist_ok=True)
-    if args.n or args.q is None:
-        outputs = save_visible_pages(
-            window,
+    if args.f and args.q is None:
+        tesseract = open_group.resolve_tesseract(args.tesseract)
+        if tesseract is None:
+            print("未找到 Tesseract，联系人详情定位需要 OCR。")
+            return 2
+        outputs, stop_reason = save_contact_detail_pages(window, args.o, args.s, tesseract)
+        emit_result(
             args.o,
-            args.s,
-            live=args.q is not None or args.s > 1,
+            {
+                "ok": bool(outputs),
+                "ocr": True,
+                "mode": args.m,
+                "target": "friend",
+                "query": args.q,
+                "pages": outputs,
+                "stop_reason": stop_reason,
+                "capture_scope": "contact_details",
+                "target_pid": pid,
+                "pid_source": pid_source,
+            },
         )
-        print(
-            json.dumps(
-                {
-                    "ok": True,
-                    "ocr": False,
-                    "mode": args.m,
-                    "target": target_label,
-                    "query": args.q,
-                    "pages": outputs,
-                    "target_pid": pid,
-                    "pid_source": pid_source,
-                },
-                ensure_ascii=False,
-                indent=2,
+        return 0 if outputs else 3
+    if args.n or args.q is None:
+        if args.m == "saved" and not args.f:
+            tesseract = open_group.resolve_tesseract(args.tesseract)
+            if tesseract is None:
+                print("未找到 Tesseract，无法确认 Saved Groups 分区边界。")
+                return 2
+            if not expand_saved_groups(window, tesseract, args.o):
+                print("未找到 Saved Groups/保存的群聊分区。")
+                return 2
+            outputs, stop_reason = save_saved_group_pages(
+                window, args.o, args.s or MAX_PAGES, tesseract
             )
+        else:
+            outputs, stop_reason = save_visible_pages(
+                window,
+                args.o,
+                args.s,
+                live=args.q is not None or args.s is None or args.s > 1,
+            )
+        emit_result(
+            args.o,
+            {
+                "ok": True,
+                "ocr": False,
+                "mode": args.m,
+                "target": target_label,
+                "query": args.q,
+                "pages": outputs,
+                "stop_reason": stop_reason,
+                "capture_scope": "saved_groups"
+                if args.m == "saved" and not args.f
+                else "list",
+                "target_pid": pid,
+                "pid_source": pid_source,
+            },
         )
         return 0
 
@@ -474,10 +814,12 @@ def main() -> int:
         print("未找到 Tesseract。使用 -n 可跳过 OCR 直接截图。")
         return 2
     if saved_group_search:
-        scroll_list_to_top(window)
+        if not expand_saved_groups(window, tesseract, args.o):
+            print("未找到 Saved Groups/保存的群聊分区。")
+            return 2
         try:
             match, crop_offset, ocr_seconds, screenshots = find_saved_group(
-                window, args.q, args.o, args.s, tesseract
+                window, args.q, args.o, args.s or MAX_PAGES, tesseract
             )
         except RuntimeError as error:
             print(f"无法识别保存的群聊列表：{error}")
