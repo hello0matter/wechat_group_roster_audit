@@ -10,6 +10,8 @@ from pathlib import Path
 
 import win32api
 import win32con
+import win32gui
+import win32process
 from PIL import Image, ImageChops, ImageStat
 
 import open_group
@@ -44,6 +46,8 @@ MIN_JOIN_BUTTON_GREEN_PIXELS = 800
 CHAT_OPEN_ATTEMPTS = 2
 CHAT_OPEN_WAIT_SECONDS = 0.8
 CONTACT_DETAIL_WAIT_SECONDS = 0.55
+AUXILIARY_WINDOW_WAIT_SECONDS = 4.0
+AUXILIARY_WINDOW_POLL_SECONDS = 0.1
 CONTACT_ROW_MIN_TOP = 90
 CONTACT_ROW_MAX_TOP_RATIO = 0.92
 CONTACT_ROW_MIN_GAP = 18
@@ -55,6 +59,7 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("-m", choices=("chat", "saved"), default="chat")
     result.add_argument("-f", action="store_true", help="target a friend instead of a group")
+    result.add_argument("-r", "--recent", action="store_true", help="capture contacts from recent direct chats")
     result.add_argument("-q", metavar="TEXT", help="single search text")
     result.add_argument("-n", action="store_true", help="skip OCR; keep results open and screenshot")
     result.add_argument(
@@ -545,12 +550,218 @@ def _contact_rows(lines: list[open_group.OcrLine], image: Image.Image) -> list[o
 def contact_identifier(lines: list[open_group.OcrLine], image: Image.Image) -> str | None:
     """Read the visible profile identifier used to reject unchanged details."""
     for line in lines:
-        if line.left < round(image.width * 0.42):
+        if line.left < round(image.width * 0.25):
             continue
         match = re.search(r"(?:Weixin\s*ID|微信号)\s*[:：]\s*(\S+)", line.text, re.IGNORECASE)
         if match:
             return match.group(1).strip()
     return None
+
+
+def recent_conversation_rows(image: Image.Image) -> list[open_group.OcrLine]:
+    """Locate visible conversation rows by their avatars in visual order."""
+    left, right = round(image.width * 0.105), round(image.width * 0.16)
+    variation = [
+        sum(ImageStat.Stat(image.crop((left, y, right, y + 1)).convert("RGB")).stddev)
+        for y in range(image.height)
+    ]
+    rows = []
+    run_start = None
+    for y, value in enumerate([*variation, 0.0]):
+        if value > 18 and run_start is None:
+            run_start = y
+        elif value <= 18 and run_start is not None:
+            height = y - run_start
+            if 30 <= height <= 65 and run_start >= 120:
+                rows.append(open_group.OcrLine(f"chat-{run_start}", left, run_start, right, y - 1))
+            run_start = None
+    return rows
+
+
+def direct_chat_avatar(
+    lines: list[open_group.OcrLine], image: Image.Image
+) -> tuple[int, int] | None:
+    """Return the sole peer avatar in a direct-chat settings page."""
+    normalized = [open_group.normalize_text(line.text) for line in lines]
+    if not any("searchchathistory" in text or "搜索聊天记录" in text for text in normalized):
+        return None
+    add = next((line for line in lines if open_group.normalize_text(line.text) in {"add", "添加"}), None)
+    y1, y2 = 135, min(image.height, 198)
+    variation = [
+        sum(ImageStat.Stat(image.crop((x, y1, x + 1, y2)).convert("RGB")).stddev)
+        for x in range(image.width)
+    ]
+    blocks = []
+    run_start = None
+    for x, value in enumerate([*variation, 0.0]):
+        in_region = round(image.width * 0.66) <= x <= round(image.width * 0.96)
+        if in_region and value > 18 and run_start is None:
+            run_start = x
+        elif (not in_region or value <= 18) and run_start is not None:
+            width = x - run_start
+            if 20 <= width <= 75:
+                center = (run_start + x - 1) // 2
+                if add is None or not add.left - 20 <= center <= add.right + 20:
+                    blocks.append((center, (y1 + y2) // 2))
+            run_start = None
+    if add is not None:
+        return blocks[0] if len(blocks) == 1 else None
+    # Tesseract often misses the outlined English "Add" label. A direct chat
+    # still has exactly two visual tiles: peer avatar followed by Add. Group
+    # settings expose three or more member/add tiles and must be skipped.
+    return blocks[0] if len(blocks) == 2 else None
+
+
+def wechat_auxiliary_windows() -> set[int]:
+    """Return visible Chromium windows used by public accounts and mini programs."""
+    handles: set[int] = set()
+
+    def collect(hwnd: int, _: object) -> bool:
+        if not win32gui.IsWindowVisible(hwnd):
+            return True
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            name = audit.psutil.Process(pid).name().casefold()
+        except (OSError, audit.psutil.Error, win32gui.error):
+            return True
+        if name == "wechatappex.exe":
+            handles.add(hwnd)
+        return True
+
+    win32gui.EnumWindows(collect, None)
+    return handles
+
+
+def close_wechat_auxiliary_windows(handles: set[int]) -> None:
+    """Close only the public-account/mini-program windows selected by the caller."""
+    if not handles:
+        return
+    pids: set[int] = set()
+    for hwnd in handles:
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            pids.add(pid)
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+        except win32gui.error:
+            continue
+    time.sleep(0.35)
+    remaining = wechat_auxiliary_windows() & handles
+    for hwnd in remaining:
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            if pid in pids:
+                audit.psutil.Process(pid).terminate()
+        except (OSError, audit.psutil.Error, win32gui.error):
+            continue
+
+
+def wait_for_new_wechat_auxiliary_windows(existing: set[int]) -> set[int]:
+    """Wait for an auxiliary view opened by the current click."""
+    deadline = time.monotonic() + AUXILIARY_WINDOW_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        current = wechat_auxiliary_windows()
+        opened = current - existing
+        foreground = win32gui.GetForegroundWindow()
+        if foreground in current:
+            opened.add(foreground)
+        if opened:
+            return opened
+        time.sleep(AUXILIARY_WINDOW_POLL_SECONDS)
+    return set()
+
+
+def save_recent_contact_pages(
+    window: dict[str, object], directory: Path, maximum: int | None, tesseract: Path
+) -> tuple[list[str], str]:
+    """Open recent direct chats and save unique visible contact profiles."""
+    outputs: list[str] = []
+    seen_identifiers: set[str] = set()
+    limit = maximum or MAX_PAGES
+
+    # A previous interrupted run may have left a public-account window over
+    # Weixin. It is not a contact profile and would corrupt screen captures.
+    close_wechat_auxiliary_windows(wechat_auxiliary_windows())
+
+    def return_to_chat_list(current: dict[str, object], *, profile_open: bool) -> None:
+        close_wechat_auxiliary_windows(wechat_auxiliary_windows())
+        activation = audit.activate_window(current)
+        if activation["activated"]:
+            current = activation["window"]
+        if profile_open:
+            open_group.click_screen_point(
+                (int(current["left"]) + int(current["width"]) - 25, int(current["top"]) + 600)
+            )
+            time.sleep(0.2)
+        open_group.click_screen_point(sidebar_point(current, CHAT_NAV))
+        time.sleep(NAVIGATION_WAIT_SECONDS)
+
+    scroll_list_to_top(window)
+    for _page in range(MAX_PAGES):
+        frame = directory / ".recent-list.png"
+        window = audit.select_weixin_window(int(window["pid"])) or window
+        list_image, _ = capture_live_window(window, frame)
+        rows = recent_conversation_rows(list_image)
+        if not rows:
+            frame.replace(directory / "recent-not-detected.png")
+            return outputs, "recent_chats_not_detected"
+        for row in rows:
+            window = audit.select_weixin_window(int(window["pid"])) or window
+            open_group.click_screen_point(
+                screen_point_from_capture(
+                    window, list_image, (row.left + row.right) // 2, (row.top + row.bottom) // 2
+                )
+            )
+            time.sleep(CHAT_OPEN_WAIT_SECONDS)
+            window = audit.select_weixin_window(int(window["pid"])) or window
+            open_group.click_screen_point(
+                (int(window["left"]) + int(window["width"]) - 62, int(window["top"]) + 84)
+            )
+            time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
+            settings_path = directory / ".recent-settings.png"
+            settings_image, _ = capture_live_window(window, settings_path)
+            settings_lines = open_group.run_ocr(tesseract, settings_path, psm=11, language="chi_sim+eng")
+            avatar = direct_chat_avatar(settings_lines, settings_image)
+            settings_path.unlink(missing_ok=True)
+            if avatar is None:
+                return_to_chat_list(window, profile_open=False)
+                continue
+            auxiliary_windows_before = wechat_auxiliary_windows()
+            open_group.click_screen_point(screen_point_from_capture(window, settings_image, *avatar))
+            time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
+            window = audit.select_weixin_window(int(window["pid"])) or window
+            candidate = directory / ".recent-candidate.png"
+            candidate_image, _ = capture_live_window(window, candidate)
+            candidate_lines = open_group.run_ocr(tesseract, candidate, psm=11, language="chi_sim+eng")
+            identifier = contact_identifier(candidate_lines, candidate_image)
+            if identifier is not None:
+                if identifier not in seen_identifiers:
+                    seen_identifiers.add(identifier)
+                    output = directory / f"recent-contact-{len(outputs) + 1:03d}.png"
+                    candidate.replace(output)
+                    outputs.append(str(output.resolve()))
+                else:
+                    candidate.unlink(missing_ok=True)
+                return_to_chat_list(window, profile_open=True)
+            else:
+                candidate.unlink(missing_ok=True)
+                auxiliary_windows = wait_for_new_wechat_auxiliary_windows(
+                    auxiliary_windows_before
+                )
+                close_wechat_auxiliary_windows(auxiliary_windows)
+                return_to_chat_list(window, profile_open=False)
+            if len(outputs) >= limit:
+                frame.unlink(missing_ok=True)
+                return outputs, "maximum_contacts"
+        before, _ = crop_left_pane(list_image)
+        frame.unlink(missing_ok=True)
+        scroll_list(window)
+        after_path = directory / ".recent-after.png"
+        after_full, _ = capture_live_window(window, after_path)
+        after_path.unlink(missing_ok=True)
+        after, _ = crop_left_pane(after_full)
+        if not page_changed(before, after):
+            return outputs, "scrollbar_bottom"
+    return outputs, "maximum_pages"
 
 
 def expand_contacts(
@@ -756,6 +967,9 @@ def find_saved_group(
 
 def main() -> int:
     args = parser().parse_args()
+    if args.recent and (args.f or args.m != "chat" or args.q is not None):
+        print("-r/--recent 是独立的最近单聊联系人模式，不能与 -f、-m saved 或 -q 同时使用。")
+        return 2
     if args.s is not None and not 1 <= args.s <= MAX_PAGES:
         print(f"-s 必须在 1 到 {MAX_PAGES} 之间。")
         return 2
@@ -786,7 +1000,10 @@ def main() -> int:
     # `-m chat -f` means contacts: friend detail capture starts from the
     # Contacts sidebar, while plain chat mode starts from conversations.
     nav_point = sidebar_point(
-        window, CONTACTS_NAV if args.f else (CHAT_NAV if args.m == "chat" else CONTACTS_NAV)
+        window,
+        CHAT_NAV
+        if args.recent
+        else (CONTACTS_NAV if args.f else (CHAT_NAV if args.m == "chat" else CONTACTS_NAV)),
     )
     open_group.click_screen_point(nav_point)
     time.sleep(NAVIGATION_WAIT_SECONDS)
@@ -820,6 +1037,38 @@ def main() -> int:
         )
 
     args.o.mkdir(parents=True, exist_ok=True)
+    if args.recent:
+        tesseract = open_group.resolve_tesseract(args.tesseract)
+        if tesseract is None:
+            print("未找到 Tesseract，最近聊天联系人模式需要 OCR。")
+            return 2
+        for stale in args.o.glob("recent-contact-*.png"):
+            stale.unlink(missing_ok=True)
+        for temporary in (
+            ".recent-list.png",
+            ".recent-settings.png",
+            ".recent-candidate.png",
+            ".recent-after.png",
+            "recent-not-detected.png",
+        ):
+            (args.o / temporary).unlink(missing_ok=True)
+        outputs, stop_reason = save_recent_contact_pages(window, args.o, args.s, tesseract)
+        emit_result(
+            args.o,
+            {
+                "ok": bool(outputs),
+                "ocr": True,
+                "mode": "recent",
+                "target": "friend",
+                "query": None,
+                "pages": outputs,
+                "stop_reason": stop_reason,
+                "capture_scope": "recent_contact_details",
+                "target_pid": pid,
+                "pid_source": pid_source,
+            },
+        )
+        return 0 if outputs else 3
     if args.f and args.q is None:
         tesseract = open_group.resolve_tesseract(args.tesseract)
         if tesseract is None:

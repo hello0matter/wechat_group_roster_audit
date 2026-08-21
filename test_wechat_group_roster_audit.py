@@ -477,6 +477,24 @@ class WxCommandTests(unittest.TestCase):
     def test_contacts_navigation_uses_the_calibrated_sidebar_position(self):
         self.assertEqual(wx.sidebar_point({"left": 500, "top": 262}, wx.CONTACTS_NAV), (555, 504))
 
+    def test_direct_chat_avatar_accepts_avatar_and_unreadable_add_tile(self):
+        image = audit.Image.new("RGB", (1000, 800), "white")
+        for left, right in ((680, 730), (760, 800)):
+            image.paste("black", (left, 135, right, 166))
+            image.paste("white", (left, 166, right, 198))
+        lines = [open_group.OcrLine("Search Chat History", 700, 250, 900, 280)]
+
+        self.assertEqual(wx.direct_chat_avatar(lines, image), (704, 166))
+
+    def test_direct_chat_avatar_rejects_group_member_tiles(self):
+        image = audit.Image.new("RGB", (1000, 800), "white")
+        for left, right in ((670, 710), (730, 770), (790, 830)):
+            image.paste("black", (left, 135, right, 166))
+            image.paste("white", (left, 166, right, 198))
+        lines = [open_group.OcrLine("Search Chat History", 700, 250, 900, 280)]
+
+        self.assertIsNone(wx.direct_chat_avatar(lines, image))
+
     @patch("wx.audit.visible_weixin_windows")
     def test_auto_selects_only_running_weixin_when_config_pid_is_stale(self, visible_windows):
         visible_windows.return_value = [{"pid": 26764}]
@@ -534,6 +552,10 @@ class WxCommandTests(unittest.TestCase):
     def test_short_options(self):
         args = wx.parser().parse_args(["-m", "saved", "-f", "-q", "alice", "-n", "-s", "3"])
         self.assertEqual((args.m, args.f, args.q, args.n, args.s), ("saved", True, "alice", True, 3))
+
+    def test_recent_contact_option(self):
+        args = wx.parser().parse_args(["-r", "-s", "3"])
+        self.assertEqual((args.recent, args.m, args.s), (True, "chat", 3))
 
     def test_page_comparison_stops_for_nearly_identical_frames(self):
         previous = audit.Image.new("RGB", (100, 100), "white")

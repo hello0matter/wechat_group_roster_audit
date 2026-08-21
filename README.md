@@ -2,8 +2,9 @@
 
 ## 主要原理
 
-通过 `pywinauto` 对当前已登录桌面微信做只读 UI 探测，并在明确指定时导出群昵称。
-本项目不读取、不保存微信号、WXID、手机号或其他账号标识。
+通过可见鼠标操作和本地 OCR 对当前已登录桌面微信进行截图备份。联系人模式只保存微信
+界面已经显示的资料卡；OCR 用于确认 `Weixin ID/微信号` 已出现并避免重复截图。本项目不
+Hook、不注入、不读取微信数据库，也不会恢复界面没有显示或已经截断的字段。
 
 ## 使用说明
 
@@ -67,6 +68,12 @@ python wx.py -f -q "小张"
 # 通讯录好友模式，不 OCR
 python wx.py -m saved -f -q "小张" -n
 
+# 通讯录联系人资料卡，最多保存 10 个
+python wx.py -m chat -f -s 10 -o artifacts/contacts
+
+# 最近聊天中的单聊联系人资料卡；自动跳过群聊、公众号和服务通知
+python wx.py -r -s 10 -o artifacts/recent-contacts
+
 # 使用 pywechat2 UIA 点击联系人并保存右侧资料截图（默认最多 10 个）
 python uia_backup.py -s 10 -o artifacts/uia-contacts
 
@@ -108,10 +115,17 @@ $env:PYWECHAT2_ROOT = "D:\tmp\anjian\pj\st\tmp\pywechat2"
 & "$env:PYWECHAT2_ROOT\.venv\Scripts\python.exe" uia_backup.py -s 10
 ```
 
-联系人备份会用 OCR 定位通讯录行，逐个打开联系人详情并保存整窗截图；不导出或解析 WXID、微信号、手机号等账号标识。
+联系人备份会用 OCR 定位通讯录行，逐个打开联系人详情并保存整窗截图。最近聊天模式会
+打开会话右上角设置，只处理“一个联系人头像 + Add”的单聊布局；群聊会被跳过。公众号或
+小程序若打开独立的 `WeChatAppEx.exe` 窗口，程序会关闭该辅助窗口并继续，不把它当作
+联系人资料。OCR 读取 `Weixin ID/微信号` 只用于确认截图有效和本轮去重，不生成额外账号
+数据库；手机号等未显示字段不会被读取。
 群成员详情目前暂未启用，群相关代码只保留列表截图和单群预览流程，GUI 不会误触发群成员操作。
 
-源码调试不要把参数合并成一个字符串。可直接双击 `run_contact_debug.cmd`（默认 10 个联系人），也可以运行 `run_contact_debug.cmd 50` 处理 50 个联系人。它会以管理员权限运行并在结束后显示 `artifacts\debug\result.json`。`pythonw.exe` 没有控制台，闪退时不能用窗口是否出现判断成功与否。
+源码调试不要把参数合并成一个字符串。通讯录模式可双击 `run_contact_debug.cmd`，最近聊天
+模式可双击 `run_recent_debug.cmd`；两者默认 10 个联系人，也都可以追加数量，例如
+`run_recent_debug.cmd 3`。脚本会以管理员权限运行并在结束后显示对应目录的 `result.json`。
+`pythonw.exe` 没有控制台，不能用是否出现黑窗口判断成功与否。
 
 ### 跨机器使用与打包
 

@@ -105,8 +105,10 @@ class App(tk.Tk):
 
         actions = ttk.LabelFrame(main, text="备份操作", padding=10)
         actions.pack(fill="x", pady=8)
-        self.contacts_button = ttk.Button(actions, text="备份联系人截图", command=lambda: self.run_backup(False))
+        self.contacts_button = ttk.Button(actions, text="通讯录联系人", command=lambda: self.run_backup("contacts"))
         self.contacts_button.pack(side="left", padx=(0, 8))
+        self.recent_button = ttk.Button(actions, text="最近聊天联系人", command=lambda: self.run_backup("recent"))
+        self.recent_button.pack(side="left", padx=(0, 8))
         self.groups_button = ttk.Button(actions, text="群成员详情（暂未启用）", state="disabled")
         self.groups_button.pack(side="left")
         ttk.Label(actions, text="数量上限").pack(side="left", padx=(20, 5))
@@ -227,12 +229,17 @@ class App(tk.Tk):
         self.log_text(result.stdout + result.stderr)
         self.status_var.set("版本切换完成" if result.returncode == 0 else "版本切换失败")
 
-    def run_backup(self, groups: bool) -> None:
+    def run_backup(self, kind: str) -> None:
         if self.backup_running:
             self.log_text("已有备份任务正在运行，请等待完成或关闭窗口终止任务。")
             return
         self.save_config()
-        output = ROOT / "artifacts" / ("gui-saved-groups" if groups else "gui-contacts")
+        output_names = {
+            "contacts": "gui-contacts",
+            "recent": "gui-recent-contacts",
+            "groups": "gui-saved-groups",
+        }
+        output = ROOT / "artifacts" / output_names[kind]
         portable_runner = ROOT / "wechat_backup_runner.exe"
         if portable_runner.exists():
             interpreter = str(portable_runner)
@@ -251,11 +258,14 @@ class App(tk.Tk):
             interpreter = sys.executable
             script_args = [str(runner_source), "--pywechat-root", self.root_var.get()]
         args = [interpreter, *script_args, "-s", str(self.limit.get()), "-o", str(output)]
-        if groups:
+        if kind == "groups":
             args.append("--groups")
-        self.status_var.set("正在执行 UIA 备份...")
+        elif kind == "recent":
+            args.append("--recent")
+        self.status_var.set("正在执行联系人备份...")
         self.backup_running = True
         self.contacts_button.state(["disabled"])
+        self.recent_button.state(["disabled"])
         self.groups_button.state(["disabled"])
         def work() -> None:
             process = subprocess.Popen(
@@ -314,6 +324,7 @@ class App(tk.Tk):
                 elif kind == "backup_done":
                     self.backup_running = False
                     self.contacts_button.state(["!disabled"])
+                    self.recent_button.state(["!disabled"])
         except queue.Empty:
             pass
         self.after(150, self._poll)

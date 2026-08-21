@@ -21,7 +21,17 @@ def invoke(module, argv: list[str]) -> tuple[int, str]:
 
 def main() -> int:
     groups = "--groups" in sys.argv
+    recent = "--recent" in sys.argv
     args = [arg for arg in sys.argv[1:] if arg != "--backend"]
+    if recent:
+        args.remove("--recent")
+        import wx
+
+        translated = ["-r"]
+        for index, arg in enumerate(args):
+            if arg in {"-s", "--limit", "-o", "--output"} and index + 1 < len(args):
+                translated.extend(["-s" if arg in {"-s", "--limit"} else "-o", args[index + 1]])
+        return invoke(wx, translated)[0]
     if "--ocr" in args:
         args.remove("--ocr")
         import wx
