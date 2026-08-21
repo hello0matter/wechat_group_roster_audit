@@ -1,0 +1,446 @@
+"""Visible-UI group member backup for an already opened Weixin group."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import string
+import time
+from pathlib import Path
+
+import win32api
+import win32con
+from PIL import Image, ImageChops, ImageStat
+
+import open_group
+import wechat_group_roster_audit as audit
+import wx
+
+
+DEFAULT_TERMS = tuple(string.ascii_lowercase) + ("1",)
+GROUP_SEARCH_POINT = (0.80, 0.15)
+GROUP_RESULT_SCROLL_POINT = (0.79, 0.72)
+PROFILE_DISMISS_POINT = (0.50, 0.72)
+RESULT_PANEL = (0.60, 0.18, 0.98, 0.96)
+SETTINGS_WAIT_SECONDS = 0.65
+SEARCH_WAIT_SECONDS = 0.65
+PROFILE_WAIT_SECONDS = 0.55
+SCROLL_WAIT_SECONDS = 0.30
+MAX_PAGES = 1000
+GROUP_RESULTS_CROP = (0.09, 0.10, 0.55, 0.93)
+GROUP_RESULTS_SCALE = 2
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description="Capture visible members of the opened group")
+    result.add_argument("-g", "--group", help="group name or unique visible fragment")
+    result.add_argument("-M", "--member-mode", choices=("auto", "list", "detail"), default="auto")
+    result.add_argument("-k", "--terms", default="a-z,1", help="member search terms")
+    result.add_argument("-s", type=int, default=MAX_PAGES, metavar="N", help="maximum pages per term")
+    result.add_argument("-o", type=Path, default=Path("artifacts/group-members"))
+    result.add_argument("-p", type=int, help="explicit Weixin PID")
+    result.add_argument("--tesseract", type=Path)
+    return result
+
+
+def parse_terms(value: str) -> tuple[str, ...]:
+    """Expand the short a-z token and retain unique terms in input order."""
+    result: list[str] = []
+    for raw in value.replace("，", ",").split(","):
+        term = raw.strip()
+        expanded = string.ascii_lowercase if term.casefold() == "a-z" else (term,)
+        for item in expanded:
+            if item and item not in result:
+                result.append(item)
+    return tuple(result)
+
+
+def result_member_rows(image: Image.Image) -> list[open_group.OcrLine]:
+    """Locate member result rows from avatar texture, independent of nickname OCR."""
+    left, right = round(image.width * 0.62), round(image.width * 0.69)
+    variation = [
+        sum(ImageStat.Stat(image.crop((left, y, right, y + 1)).convert("RGB")).stddev)
+        for y in range(image.height)
+    ]
+    rows: list[open_group.OcrLine] = []
+    run_start = None
+    for y, value in enumerate([*variation, 0.0]):
+        if value > 18 and run_start is None:
+            run_start = y
+        elif value <= 18 and run_start is not None:
+            height = y - run_start
+            if 30 <= height <= 68 and run_start >= round(image.height * 0.18):
+                rows.append(
+                    open_group.OcrLine(
+                        f"member-{run_start}", left, run_start, right, y - 1
+                    )
+                )
+            run_start = None
+    return rows
+
+
+def visible_identifiers(
+    lines: list[open_group.OcrLine], image: Image.Image
+) -> list[str]:
+    """Read IDs already exposed directly in the group member result list."""
+    identifiers: list[str] = []
+    for line in lines:
+        if line.left < round(image.width * RESULT_PANEL[0]):
+            continue
+        identifier = wx.contact_identifier([line], image)
+        if identifier is not None and identifier not in identifiers:
+            identifiers.append(identifier)
+    return identifiers
+
+
+def crop_result_panel(image: Image.Image) -> Image.Image:
+    return image.crop(
+        (
+            round(image.width * RESULT_PANEL[0]),
+            round(image.height * RESULT_PANEL[1]),
+            round(image.width * RESULT_PANEL[2]),
+            round(image.height * RESULT_PANEL[3]),
+        )
+    )
+
+
+def result_page_changed(previous: Image.Image, current: Image.Image) -> bool:
+    if previous.size != current.size:
+        return True
+    difference = ImageStat.Stat(ImageChops.difference(previous, current).convert("L")).mean[0]
+    return difference >= wx.UNCHANGED_PAGE_MEAN_DIFFERENCE
+
+
+def scroll_member_results(window: dict[str, object], *, upward: bool = False) -> None:
+    open_group.set_cursor_pos(wx.point_in_window(window, GROUP_RESULT_SCROLL_POINT))
+    win32api.mouse_event(
+        win32con.MOUSEEVENTF_WHEEL,
+        0,
+        0,
+        12000 if upward else -12000,
+        0,
+    )
+    time.sleep(SCROLL_WAIT_SECONDS)
+
+
+def replace_search_text(window: dict[str, object], value: str) -> None:
+    open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
+    time.sleep(0.15)
+    open_group.select_all()
+    open_group.send_unicode_text(value)
+    time.sleep(SEARCH_WAIT_SECONDS)
+
+
+def open_named_group(
+    window: dict[str, object], query: str, directory: Path, tesseract: Path
+) -> dict[str, object]:
+    """Open one group from global search without accepting non-group results."""
+    open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
+    time.sleep(wx.NAVIGATION_WAIT_SECONDS)
+    search_point = wx.point_in_window(window, wx.SEARCH_FIELD)
+    open_group.click_screen_point(search_point)
+    time.sleep(wx.SEARCH_FOCUS_WAIT_SECONDS)
+    hwnd = int(window["hwnd"])
+    active, focus, caret = open_group.gui_thread_handles()
+    if (active, focus, caret) != (hwnd, hwnd, hwnd):
+        raise RuntimeError("global_search_not_focusable")
+    open_group.select_all()
+    open_group.send_unicode_text(query)
+    time.sleep(wx.SEARCH_RESULT_WAIT_OCR_SECONDS)
+    results_path = directory / ".group-search-results.png"
+    image, _ = wx.capture_live_window(window, results_path)
+    crop_box = (
+        round(image.width * GROUP_RESULTS_CROP[0]),
+        round(image.height * GROUP_RESULTS_CROP[1]),
+        round(image.width * GROUP_RESULTS_CROP[2]),
+        round(image.height * GROUP_RESULTS_CROP[3]),
+    )
+    enlarged = image.crop(crop_box).resize(
+        (
+            (crop_box[2] - crop_box[0]) * GROUP_RESULTS_SCALE,
+            (crop_box[3] - crop_box[1]) * GROUP_RESULTS_SCALE,
+        )
+    )
+    crop_path = directory / ".group-search-results-enlarged.png"
+    enlarged.save(crop_path)
+    lines = open_group.run_ocr(tesseract, crop_path, psm=6, language="chi_sim+eng")
+    match = wx.find_exact_result(lines, query, {"most_used", "groups"})
+    crop_path.unlink(missing_ok=True)
+    if match is None:
+        raise RuntimeError("group_not_found_in_group_results")
+    match_x = crop_box[0] + (match.left + match.right) // (2 * GROUP_RESULTS_SCALE)
+    match_y = crop_box[1] + (match.top + match.bottom) // (2 * GROUP_RESULTS_SCALE)
+    result_point = wx.screen_point_from_capture(
+        window, image, match_x, match_y
+    )
+    _, verified, _, opened_path = wx.click_result_and_verify_chat(
+        window, result_point, tesseract, directory, query
+    )
+    if not verified:
+        opened_lines = open_group.run_ocr(
+            tesseract, opened_path, psm=11, language="chi_sim+eng"
+        )
+        if login_required(opened_lines):
+            raise RuntimeError("weixin_login_required")
+        raise RuntimeError("opened_group_title_not_verified")
+    results_path.unlink(missing_ok=True)
+    return audit.select_weixin_window(int(window["pid"])) or window
+
+
+def settings_visible(lines: list[open_group.OcrLine]) -> bool:
+    normalized = [open_group.normalize_text(line.text) for line in lines]
+    return any(
+        marker in text
+        for text in normalized
+        for marker in ("groupname", "群聊名称", "myaliasingroup", "我在本群的昵称")
+    )
+
+
+def login_required(lines: list[open_group.OcrLine]) -> bool:
+    normalized = [open_group.normalize_text(line.text) for line in lines]
+    return any(
+        ("accountsecurity" in text and "loginagain" in text)
+        or "为了账号安全请重新登录" in text
+        or "transferfilesonly" in text
+        or "仅传输文件" in text
+        for text in normalized
+    )
+
+
+def prepare_group_member_search(
+    window: dict[str, object], directory: Path, tesseract: Path
+) -> tuple[dict[str, object], Image.Image]:
+    """Open group settings when necessary and focus its member search field."""
+    directory.mkdir(parents=True, exist_ok=True)
+    probe = directory / ".group-settings.png"
+    image, _ = wx.capture_live_window(window, probe)
+    lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+    for attempt in range(3):
+        if settings_visible(lines):
+            break
+        point = (
+            int(window["left"]) + int(window["width"]) - 62,
+            int(window["top"]) + 84,
+        )
+        open_group.click_screen_point(point)
+        time.sleep(SETTINGS_WAIT_SECONDS + attempt * 0.2)
+        window = audit.select_weixin_window(int(window["pid"])) or window
+        image, _ = wx.capture_live_window(window, probe)
+        lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+    if not settings_visible(lines):
+        raise RuntimeError("group_settings_not_detected")
+
+    open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
+    time.sleep(0.2)
+    active, focus, caret = open_group.gui_thread_handles()
+    hwnd = int(window["hwnd"])
+    if (active, focus, caret) != (hwnd, hwnd, hwnd):
+        show_all = next(
+            (
+                line
+                for line in lines
+                if open_group.normalize_text(line.text) in {"showall", "查看更多"}
+            ),
+            None,
+        )
+        if show_all is None:
+            raise RuntimeError("group_member_search_not_focusable")
+        open_group.click_screen_point(
+            wx.screen_point_from_capture(
+                window,
+                image,
+                (show_all.left + show_all.right) // 2,
+                (show_all.top + show_all.bottom) // 2,
+            )
+        )
+        time.sleep(SETTINGS_WAIT_SECONDS)
+        open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
+        time.sleep(0.2)
+        active, focus, caret = open_group.gui_thread_handles()
+        if (active, focus, caret) != (hwnd, hwnd, hwnd):
+            raise RuntimeError("group_member_search_not_focusable")
+    probe.unlink(missing_ok=True)
+    return window, image
+
+
+def save_list_pages(
+    window: dict[str, object],
+    directory: Path,
+    term: str,
+    maximum: int,
+) -> list[str]:
+    outputs: list[str] = []
+    label = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-") or "term"
+    for index in range(maximum):
+        path = directory / f"members-{label}-{index + 1:03d}.png"
+        image, _ = wx.capture_live_window(window, path)
+        rows = result_member_rows(image)
+        if not rows:
+            path.unlink(missing_ok=True)
+            break
+        outputs.append(str(path.resolve()))
+        before = crop_result_panel(image)
+        scroll_member_results(window)
+        after_path = directory / ".members-after.png"
+        after_image, _ = wx.capture_live_window(window, after_path)
+        after_path.unlink(missing_ok=True)
+        if not result_page_changed(before, crop_result_panel(after_image)):
+            break
+    return outputs
+
+
+def save_detail_pages(
+    window: dict[str, object],
+    directory: Path,
+    term: str,
+    maximum: int,
+    tesseract: Path,
+    seen_identifiers: set[str],
+) -> list[str]:
+    outputs: list[str] = []
+    for _page in range(maximum):
+        page_path = directory / ".member-results.png"
+        image, _ = wx.capture_live_window(window, page_path)
+        rows = result_member_rows(image)
+        if not rows:
+            page_path.unlink(missing_ok=True)
+            break
+        for row in rows:
+            open_group.click_screen_point(
+                wx.screen_point_from_capture(
+                    window,
+                    image,
+                    (row.left + row.right) // 2,
+                    (row.top + row.bottom) // 2,
+                )
+            )
+            time.sleep(PROFILE_WAIT_SECONDS)
+            candidate = directory / ".member-profile.png"
+            candidate_image, _ = wx.capture_live_window(window, candidate)
+            lines = open_group.run_ocr(
+                tesseract, candidate, psm=11, language="chi_sim+eng"
+            )
+            identifier = wx.contact_identifier(lines, candidate_image)
+            if identifier is not None and identifier not in seen_identifiers:
+                seen_identifiers.add(identifier)
+                output = directory / f"member-{len(seen_identifiers):05d}.png"
+                candidate.replace(output)
+                outputs.append(str(output.resolve()))
+            else:
+                candidate.unlink(missing_ok=True)
+            open_group.click_screen_point(wx.point_in_window(window, PROFILE_DISMISS_POINT))
+            time.sleep(0.18)
+        before = crop_result_panel(image)
+        page_path.unlink(missing_ok=True)
+        scroll_member_results(window)
+        after_path = directory / ".members-after.png"
+        after_image, _ = wx.capture_live_window(window, after_path)
+        after_path.unlink(missing_ok=True)
+        if not result_page_changed(before, crop_result_panel(after_image)):
+            break
+    return outputs
+
+
+def backup_open_group(
+    window: dict[str, object],
+    directory: Path,
+    terms: tuple[str, ...],
+    member_mode: str,
+    maximum_pages: int,
+    tesseract: Path,
+) -> dict[str, object]:
+    """Backup one opened group's visible member search results."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for pattern in ("members-*.png", "member-*.png"):
+        for stale in directory.glob(pattern):
+            stale.unlink(missing_ok=True)
+    window, _ = prepare_group_member_search(window, directory, tesseract)
+    outputs: list[str] = []
+    seen_identifiers: set[str] = set()
+    selected_mode = member_mode
+    decisions: dict[str, str] = {}
+    for term in terms:
+        for _ in range(3):
+            scroll_member_results(window, upward=True)
+        replace_search_text(window, term)
+        probe = directory / ".member-mode-probe.png"
+        image, _ = wx.capture_live_window(window, probe)
+        lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+        rows = result_member_rows(image)
+        if not rows:
+            probe.unlink(missing_ok=True)
+            decisions[term] = "empty"
+            continue
+        mode = selected_mode
+        if mode == "auto":
+            mode = "list" if visible_identifiers(lines, image) else "detail"
+        decisions[term] = mode
+        probe.unlink(missing_ok=True)
+        if mode == "list":
+            outputs.extend(save_list_pages(window, directory, term, maximum_pages))
+        else:
+            outputs.extend(
+                save_detail_pages(
+                    window,
+                    directory,
+                    term,
+                    maximum_pages,
+                    tesseract,
+                    seen_identifiers,
+                )
+            )
+    return {
+        "ok": bool(outputs),
+        "member_mode": member_mode,
+        "terms": list(terms),
+        "decisions": decisions,
+        "pages": outputs,
+        "identifiers": sorted(seen_identifiers),
+    }
+
+
+def main() -> int:
+    args = parser().parse_args()
+    if not 1 <= args.s <= MAX_PAGES:
+        print(f"-s 必须在 1 到 {MAX_PAGES} 之间。")
+        return 2
+    terms = parse_terms(args.terms)
+    if not terms:
+        print("-k 至少需要一个搜索词。")
+        return 2
+    tesseract = open_group.resolve_tesseract(args.tesseract)
+    if tesseract is None:
+        print("未找到 Tesseract OCR。")
+        return 2
+    pid, pid_source = wx.select_pid(args.p, audit.DEFAULT_PANEL_CONFIG)
+    if pid is None:
+        print(f"无法确定微信 PID（{pid_source}）。")
+        return 2
+    window = audit.select_weixin_window(pid)
+    if window is None:
+        print(f"未找到 PID {pid} 的微信主窗口。")
+        return 2
+    activation = audit.activate_window(window)
+    if not activation["activated"]:
+        print(json.dumps({"ok": False, "activation": activation}, ensure_ascii=False))
+        return 2
+    args.o.mkdir(parents=True, exist_ok=True)
+    try:
+        window = activation["window"]
+        if args.group:
+            window = open_named_group(window, args.group, args.o, tesseract)
+        result = backup_open_group(
+            window, args.o, terms, args.member_mode, args.s, tesseract
+        )
+    except RuntimeError as error:
+        result = {"ok": False, "reason": str(error), "pages": []}
+    result.update({"target_pid": pid, "pid_source": pid_source})
+    serialized = json.dumps(result, ensure_ascii=False, indent=2)
+    (args.o / "result.json").write_text(serialized + "\n", encoding="utf-8")
+    print(serialized)
+    return 0 if result["ok"] else 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

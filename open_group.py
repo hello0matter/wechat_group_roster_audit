@@ -7,6 +7,7 @@ import ctypes
 import json
 import shutil
 import subprocess
+import sys
 import time
 from collections import defaultdict
 from ctypes import wintypes
@@ -185,6 +186,9 @@ def find_group_result(lines: list[OcrLine], group_name: str) -> OcrLine | None:
 def resolve_tesseract(value: Path | None) -> Path | None:
     if value is not None:
         return value if value.is_file() else None
+    portable = Path(sys.executable).resolve().parent / "tesseract" / "tesseract.exe"
+    if portable.is_file():
+        return portable
     if DEFAULT_TESSERACT.is_file():
         return DEFAULT_TESSERACT
     executable = shutil.which("tesseract")

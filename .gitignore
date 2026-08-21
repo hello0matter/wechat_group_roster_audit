@@ -6,6 +6,7 @@ dist/
 portable/
 WechatRosterGUI.spec
 uia_backup_runner.spec
+wechat_backup_runner.spec
 gui_config.json
 group_nicknames.csv
 panel_config.json

@@ -74,6 +74,18 @@ python wx.py -m chat -f -s 10 -o artifacts/contacts
 # 最近聊天中的单聊联系人资料卡；自动跳过群聊、公众号和服务通知
 python wx.py -r -s 10 -o artifacts/recent-contacts
 
+# 组合工作流：最近会话只向下扫描一次，同时分流联系人和群
+python workflow_runner.py -t recent_people,recent_groups -n 1000 -G 1000
+
+# 四种来源全部执行；群成员依次搜索 a-z 和 1
+python workflow_runner.py -t recent_people,recent_groups,contacts,saved_groups -k "a-z,1"
+
+# 只处理群名包含这些关键字的群，避免全量遍历
+python workflow_runner.py -t recent_groups,saved_groups -g "饭团,广州周末" -k "a-z,1"
+
+# 已经手动打开一个群时，直接备份当前群；每个搜索词最多 3 页
+python group_member_backup.py -M auto -k "a-z,1" -s 3
+
 # 使用 pywechat2 UIA 点击联系人并保存右侧资料截图（默认最多 10 个）
 python uia_backup.py -s 10 -o artifacts/uia-contacts
 
@@ -120,7 +132,17 @@ $env:PYWECHAT2_ROOT = "D:\tmp\anjian\pj\st\tmp\pywechat2"
 小程序若打开独立的 `WeChatAppEx.exe` 窗口，程序会关闭该辅助窗口并继续，不把它当作
 联系人资料。OCR 读取 `Weixin ID/微信号` 只用于确认截图有效和本轮去重，不生成额外账号
 数据库；手机号等未显示字段不会被读取。
-群成员详情目前暂未启用，群相关代码只保留列表截图和单群预览流程，GUI 不会误触发群成员操作。
+群成员支持三种策略：`auto` 会先观察搜索结果；直接出现 `Weixin ID/微信号` 时使用 `list`
+策略，整页快速向下截图；没有直接显示时使用 `detail` 策略，逐项打开资料卡截图。`list` 和
+`detail` 也可以在 GUI 或 `-M` 参数中强制选择。默认成员搜索词 `a-z,1` 会展开为 26 个字母
+加数字 `1`，不是一个字面字符串。逐项模式按微信号去重；整页模式保留原始页面，便于人工
+核对昵称、头像和顺序。
+
+GUI 可同时勾选“最近会话：联系人”“最近会话：群”“通讯录：全部联系人”“通讯录：保存的
+群”。最近联系人和最近群由同一次列表扫描分流，不会为了不同类型重新从顶部扫描。群名筛选
+留空时按来源自动到底；填写逗号分隔关键字时只处理匹配群。通讯录的保存群未填写筛选时会先
+展开 `Saved Groups/保存的群聊` 读取可见名称，再从安全的 `Group Chats/群聊` 搜索结果打开；
+无法打开或需要重新加入的保存群会记录失败原因，不会点击 `Join Group`。
 
 源码调试不要把参数合并成一个字符串。通讯录模式可双击 `run_contact_debug.cmd`，最近聊天
 模式可双击 `run_recent_debug.cmd`；两者默认 10 个联系人，也都可以追加数量，例如
@@ -136,7 +158,8 @@ $env:PYWECHAT2_ROOT = "D:\tmp\anjian\pj\st\tmp\pywechat2"
 - `pywechat2\`：随包携带的源码和 Git 版本目录
 
 整个 `portable` 目录可以复制到另一台 64 位 Windows 10/11 机器，不要求目标机安装
-Python、pip 或外部 pywechat2 环境。目标机仍必须安装桌面微信、先手动登录，并允许桌面自动化；
+Python、pip、Tesseract 或外部 pywechat2 环境。`portable\tesseract` 随包携带 OCR 引擎及
+中英文语言数据。目标机仍必须安装桌面微信、先手动登录，并允许桌面自动化；
 程序不会替用户登录。GUI 的版本更新和切换直接操作包内的 `pywechat2\`，不需要重新打包 EXE。
 截图功能不依赖目标机的 Python；有 Git 时优先使用 Git，无 Git 时 GUI 会通过 GitHub API
 显示版本并下载源码。两种方式都使用代理配置。
@@ -145,6 +168,12 @@ Python、pip 或外部 pywechat2 环境。目标机仍必须安装桌面微信�
 刷新/更新功能对当前配置的 pywechat2 checkout 执行 Git 操作；默认路径是包内的
 `pywechat2\`。代理配置支持直连、HTTP、SOCKS5，默认
 为 `127.0.0.1:7891`，只用于 Git 更新和依赖下载。
+
+命令行组合工作流使用短参数：`-t` 选择任务，`-g` 指定逗号分隔群名筛选，`-k` 指定成员
+搜索词，`-M auto|list|detail` 选择群策略，`-n` 是联系人上限，`-G` 是群上限，`-s` 是
+每个成员搜索词的页面上限，`-o` 是输出目录。GUI 会把这些选项保存到同目录
+`gui_config.json`，下次启动自动恢复。关闭 GUI 时会终止整个后端进程树，不留下鼠标自动化、
+Python 或 Tesseract 子进程。
 
 列出当前微信主窗口（包括缩到托盘后隐藏的窗口）：
 

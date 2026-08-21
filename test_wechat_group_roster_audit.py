@@ -8,6 +8,9 @@ from unittest.mock import patch
 import wechat_group_roster_audit as audit
 import quick_capture
 import open_group
+import group_member_backup
+import recent_mixed_backup
+import workflow_runner
 import wx
 
 
@@ -556,6 +559,65 @@ class WxCommandTests(unittest.TestCase):
     def test_recent_contact_option(self):
         args = wx.parser().parse_args(["-r", "-s", "3"])
         self.assertEqual((args.recent, args.m, args.s), (True, "chat", 3))
+
+    def test_group_member_terms_expand_a_to_z(self):
+        terms = group_member_backup.parse_terms("a-z,1,a")
+
+        self.assertEqual(terms, (*tuple("abcdefghijklmnopqrstuvwxyz"), "1"))
+
+    def test_visible_group_member_identifiers_are_scoped_to_results(self):
+        image = audit.Image.new("RGB", (1000, 800), "white")
+        lines = [
+            open_group.OcrLine("Weixin ID: outside", 100, 100, 250, 130),
+            open_group.OcrLine("Weixin ID: member-one", 700, 200, 900, 230),
+        ]
+
+        self.assertEqual(
+            group_member_backup.visible_identifiers(lines, image), ["member-one"]
+        )
+
+    def test_chat_message_group_notice_is_not_group_settings(self):
+        lines = [open_group.OcrLine("群公告", 500, 300, 600, 330)]
+
+        self.assertFalse(group_member_backup.settings_visible(lines))
+        self.assertTrue(
+            group_member_backup.settings_visible(
+                [open_group.OcrLine("Group Name", 700, 500, 850, 530)]
+            )
+        )
+
+    def test_recognizes_weixin_login_required_dialog(self):
+        lines = [
+            open_group.OcrLine(
+                "For account security, log in again.", 300, 300, 700, 340
+            )
+        ]
+
+        self.assertTrue(group_member_backup.login_required(lines))
+
+    def test_recent_group_filters_match_normalized_title(self):
+        self.assertTrue(
+            recent_mixed_backup.matches_group_keywords(
+                "饭团 美食福利 vip3群", ("饭团",)
+            )
+        )
+        self.assertFalse(
+            recent_mixed_backup.matches_group_keywords("广州周末群", ("饭团",))
+        )
+
+    def test_workflow_tasks_reject_unknown_values(self):
+        self.assertEqual(
+            workflow_runner.parse_tasks("recent_people,contacts"),
+            ("recent_people", "contacts"),
+        )
+        with self.assertRaisesRegex(ValueError, "unknown tasks"):
+            workflow_runner.parse_tasks("recent_people,unknown")
+
+    def test_contact_identifier_strips_ocr_punctuation(self):
+        image = audit.Image.new("RGB", (1000, 800), "white")
+        lines = [open_group.OcrLine("Weixin ID: xs1732443280:", 500, 200, 800, 230)]
+
+        self.assertEqual(wx.contact_identifier(lines, image), "xs1732443280")
 
     def test_page_comparison_stops_for_nearly_identical_frames(self):
         previous = audit.Image.new("RGB", (100, 100), "white")

@@ -20,9 +20,20 @@ def invoke(module, argv: list[str]) -> tuple[int, str]:
 
 
 def main() -> int:
+    workflow = "--workflow" in sys.argv
     groups = "--groups" in sys.argv
     recent = "--recent" in sys.argv
     args = [arg for arg in sys.argv[1:] if arg != "--backend"]
+    if workflow:
+        args.remove("--workflow")
+        if "--pywechat-root" in args:
+            index = args.index("--pywechat-root")
+            del args[index : index + 2]
+        import workflow_runner
+
+        code, output = invoke(workflow_runner, args)
+        print(output, end="")
+        return code
     if recent:
         args.remove("--recent")
         import wx

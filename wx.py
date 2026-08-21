@@ -554,7 +554,7 @@ def contact_identifier(lines: list[open_group.OcrLine], image: Image.Image) -> s
             continue
         match = re.search(r"(?:Weixin\s*ID|微信号)\s*[:：]\s*(\S+)", line.text, re.IGNORECASE)
         if match:
-            return match.group(1).strip()
+            return match.group(1).strip().strip(":：;,，。")
     return None
 
 
@@ -586,6 +586,22 @@ def direct_chat_avatar(
     if not any("searchchathistory" in text or "搜索聊天记录" in text for text in normalized):
         return None
     add = next((line for line in lines if open_group.normalize_text(line.text) in {"add", "添加"}), None)
+    blocks = chat_settings_member_tiles(image)
+    if add is not None:
+        blocks = [
+            point
+            for point in blocks
+            if not add.left - 20 <= point[0] <= add.right + 20
+        ]
+        return blocks[0] if len(blocks) == 1 else None
+    # Tesseract often misses the outlined English "Add" label. A direct chat
+    # still has exactly two visual tiles: peer avatar followed by Add. Group
+    # settings expose three or more member/add tiles and must be skipped.
+    return blocks[0] if len(blocks) == 2 else None
+
+
+def chat_settings_member_tiles(image: Image.Image) -> list[tuple[int, int]]:
+    """Locate the first row of member and Add tiles in chat settings."""
     y1, y2 = 135, min(image.height, 198)
     variation = [
         sum(ImageStat.Stat(image.crop((x, y1, x + 1, y2)).convert("RGB")).stddev)
@@ -601,15 +617,9 @@ def direct_chat_avatar(
             width = x - run_start
             if 20 <= width <= 75:
                 center = (run_start + x - 1) // 2
-                if add is None or not add.left - 20 <= center <= add.right + 20:
-                    blocks.append((center, (y1 + y2) // 2))
+                blocks.append((center, (y1 + y2) // 2))
             run_start = None
-    if add is not None:
-        return blocks[0] if len(blocks) == 1 else None
-    # Tesseract often misses the outlined English "Add" label. A direct chat
-    # still has exactly two visual tiles: peer avatar followed by Add. Group
-    # settings expose three or more member/add tiles and must be skipped.
-    return blocks[0] if len(blocks) == 2 else None
+    return blocks
 
 
 def wechat_auxiliary_windows() -> set[int]:
@@ -677,13 +687,12 @@ def save_recent_contact_pages(
     outputs: list[str] = []
     seen_identifiers: set[str] = set()
     limit = maximum or MAX_PAGES
-
-    # A previous interrupted run may have left a public-account window over
-    # Weixin. It is not a contact profile and would corrupt screen captures.
-    close_wechat_auxiliary_windows(wechat_auxiliary_windows())
+    preexisting_auxiliary_windows = wechat_auxiliary_windows()
 
     def return_to_chat_list(current: dict[str, object], *, profile_open: bool) -> None:
-        close_wechat_auxiliary_windows(wechat_auxiliary_windows())
+        close_wechat_auxiliary_windows(
+            wechat_auxiliary_windows() - preexisting_auxiliary_windows
+        )
         activation = audit.activate_window(current)
         if activation["activated"]:
             current = activation["window"]
