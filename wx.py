@@ -521,7 +521,7 @@ def _contact_rows(lines: list[open_group.OcrLine], image: Image.Image) -> list[o
         if text in {"starred", "星标朋友"}:
             continue
         # Names are in the middle/right of the row; ignore tiny labels at the edge.
-        if line.left < round(image.width * 0.17) or line.left > round(image.width * 0.34):
+        if line.left < round(image.width * 0.12) or line.left > round(image.width * 0.34):
             continue
         if rows and line.top - rows[-1].top < CONTACT_ROW_MIN_GAP:
             if line.right > rows[-1].right:
@@ -542,16 +542,19 @@ def expand_contacts(
     if heading is None:
         frame.unlink(missing_ok=True)
         return False
-    normalized = open_group.normalize_text(heading.text)
-    if normalized[:1] in {">", "v", "y"}:
-        point = screen_point_from_capture(
-            window,
-            full_image,
-            (heading.left + heading.right) // 2,
-            (heading.top + heading.bottom) // 2,
-        )
-        open_group.click_screen_point(point)
-        time.sleep(NAVIGATION_WAIT_SECONDS)
+    # The section may already be expanded from a previous run. In that case
+    # clicking the heading would collapse it and hide the rows we need.
+    if _contact_rows(lines, full_image):
+        frame.unlink(missing_ok=True)
+        return True
+    point = screen_point_from_capture(
+        window,
+        full_image,
+        (heading.left + heading.right) // 2,
+        (heading.top + heading.bottom) // 2,
+    )
+    open_group.click_screen_point(point)
+    time.sleep(NAVIGATION_WAIT_SECONDS)
     frame.unlink(missing_ok=True)
     verify = directory / ".contacts-expand-verify.png"
     verify_image, _ = capture_live_window(window, verify)
@@ -752,7 +755,11 @@ def main() -> int:
     window = activation["window"]
     hwnd = int(window["hwnd"])
 
-    nav_point = point_in_window(window, CHAT_NAV if args.m == "chat" else CONTACTS_NAV)
+    # `-m chat -f` means contacts: friend detail capture starts from the
+    # Contacts sidebar, while plain chat mode starts from conversations.
+    nav_point = point_in_window(
+        window, CONTACTS_NAV if args.f else (CHAT_NAV if args.m == "chat" else CONTACTS_NAV)
+    )
     open_group.click_screen_point(nav_point)
     time.sleep(NAVIGATION_WAIT_SECONDS)
 
