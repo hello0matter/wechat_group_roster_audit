@@ -17,8 +17,8 @@ import quick_capture
 import wechat_group_roster_audit as audit
 
 
-CHAT_NAV = (0.035, 0.14)
-CONTACTS_NAV = (0.05, 0.235)
+CHAT_NAV = (55, 170)
+CONTACTS_NAV = (55, 242)
 SEARCH_FIELD = (0.205, 0.07)
 LIST_SCROLL_POINT = (0.25, 0.72)
 LEFT_PANE = (0.065, 0.035, 0.36, 0.96)
@@ -85,6 +85,13 @@ def point_in_window(
         int(window["left"]) + round(int(window["width"]) * ratios[0]),
         int(window["top"]) + round(int(window["height"]) * ratios[1]),
     )
+
+
+def sidebar_point(
+    window: dict[str, object], offset: tuple[int, int]
+) -> tuple[int, int]:
+    """Return a fixed Weixin sidebar point; sidebar icons do not stretch vertically."""
+    return int(window["left"]) + offset[0], int(window["top"]) + offset[1]
 
 
 def crop_left_pane(image: Image.Image) -> tuple[Image.Image, tuple[int, int]]:
@@ -505,30 +512,33 @@ def save_visible_pages(
 
 
 def _contact_rows(lines: list[open_group.OcrLine], image: Image.Image) -> list[open_group.OcrLine]:
-    """Return likely contact rows from the left pane, excluding section headings."""
-    rows: list[open_group.OcrLine] = []
-    max_top = round(image.height * CONTACT_ROW_MAX_TOP_RATIO)
+    """Return contact rows in visual order using their square avatar regions."""
     contact_heading = next(
         (line for line in left_pane_lines(lines, image) if section_kind(line.text) == "contacts"),
         None,
     )
     min_top = max(CONTACT_ROW_MIN_TOP, contact_heading.bottom if contact_heading else 0)
-    for line in left_pane_lines(lines, image):
-        text = open_group.normalize_text(line.text)
-        if line.top < min_top or line.top > max_top or not text:
-            continue
-        if section_kind(line.text) is not None:
-            continue
-        if text in {"starred", "星标朋友"}:
-            continue
-        # Names are in the middle/right of the row; ignore tiny labels at the edge.
-        if line.left < round(image.width * 0.12) or line.left > round(image.width * 0.34):
-            continue
-        if rows and line.top - rows[-1].top < CONTACT_ROW_MIN_GAP:
-            if line.right > rows[-1].right:
-                rows[-1] = line
-            continue
-        rows.append(line)
+    max_top = round(image.height * CONTACT_ROW_MAX_TOP_RATIO)
+    left = round(image.width * 0.14)
+    right = round(image.width * 0.19)
+    variation = [
+        sum(ImageStat.Stat(image.crop((left, y, right, y + 1)).convert("RGB")).stddev)
+        for y in range(image.height)
+    ]
+    rows: list[open_group.OcrLine] = []
+    run_start = None
+    for y, value in enumerate([*variation, 0.0]):
+        if value > 18 and run_start is None:
+            run_start = y
+        elif value <= 18 and run_start is not None:
+            height = y - run_start
+            if 30 <= height <= 60 and run_start >= min_top and run_start <= max_top:
+                rows.append(
+                    open_group.OcrLine(
+                        f"avatar-{run_start}", left, run_start, right, y - 1
+                    )
+                )
+            run_start = None
     return rows
 
 
@@ -585,7 +595,6 @@ def save_contact_detail_pages(
     """Open contacts one by one and save the resulting detail panel screenshots."""
     outputs: list[str] = []
     limit = maximum or MAX_PAGES
-    seen: set[str] = set()
     seen_identifiers: set[str] = set()
     for _page in range(MAX_PAGES):
         if len(outputs) >= limit:
@@ -605,10 +614,6 @@ def save_contact_detail_pages(
             return outputs, "contacts_not_detected"
         new_row = False
         for row in rows:
-            key = open_group.normalize_text(row.text)
-            if key in seen:
-                continue
-            seen.add(key)
             new_row = True
             point = screen_point_from_capture(
                 window, full_image, (row.left + row.right) // 2, (row.top + row.bottom) // 2
@@ -780,7 +785,7 @@ def main() -> int:
 
     # `-m chat -f` means contacts: friend detail capture starts from the
     # Contacts sidebar, while plain chat mode starts from conversations.
-    nav_point = point_in_window(
+    nav_point = sidebar_point(
         window, CONTACTS_NAV if args.f else (CHAT_NAV if args.m == "chat" else CONTACTS_NAV)
     )
     open_group.click_screen_point(nav_point)
@@ -823,6 +828,7 @@ def main() -> int:
         if not expand_contacts(window, args.o, tesseract):
             print("未找到或无法展开 Contacts/联系人分区。")
             return 3
+        scroll_list_to_top(window)
         for stale in args.o.glob("contact-*.png"):
             stale.unlink(missing_ok=True)
         outputs, stop_reason = save_contact_detail_pages(window, args.o, args.s, tesseract)
