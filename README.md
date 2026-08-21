@@ -111,6 +111,8 @@ $env:PYWECHAT2_ROOT = "D:\tmp\anjian\pj\st\tmp\pywechat2"
 联系人备份会用 OCR 定位通讯录行，逐个打开联系人详情并保存整窗截图；不导出或解析 WXID、微信号、手机号等账号标识。
 群成员详情目前暂未启用，群相关代码只保留列表截图和单群预览流程，GUI 不会误触发群成员操作。
 
+源码调试不要把参数合并成一个字符串。可直接双击 `run_contact_debug.cmd`，它会以管理员权限运行并在结束后显示 `artifacts\debug\result.json`。`pythonw.exe` 没有控制台，闪退时不能用窗口是否出现判断成功与否。
+
 ### 跨机器使用与打包
 
 运行 `build_portable.ps1` 会生成 `portable` 目录，里面有：
