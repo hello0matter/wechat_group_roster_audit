@@ -565,6 +565,44 @@ class WxCommandTests(unittest.TestCase):
 
         self.assertEqual(terms, (*tuple("abcdefghijklmnopqrstuvwxyz"), "1"))
 
+    @patch("group_member_backup.open_group.gui_thread_handles")
+    def test_qt_search_focus_allows_missing_native_caret(self, gui_thread_handles):
+        gui_thread_handles.return_value = (42, 42, 0)
+
+        self.assertTrue(group_member_backup.weixin_has_keyboard_focus(42))
+
+    @patch("group_member_backup.open_group.gui_thread_handles")
+    def test_qt_search_focus_rejects_another_focused_window(self, gui_thread_handles):
+        gui_thread_handles.return_value = (42, 99, 0)
+
+        self.assertFalse(group_member_backup.weixin_has_keyboard_focus(42))
+
+    def test_group_member_rows_use_the_current_right_panel_avatar_column(self):
+        image = audit.Image.new("RGB", (1000, 800), "white")
+        image.paste("black", (720, 160, 750, 208))
+        image.paste("white", (750, 160, 780, 208))
+
+        self.assertEqual(
+            group_member_backup.result_member_rows(image),
+            [open_group.OcrLine("member-160", 720, 160, 780, 207)],
+        )
+
+    def test_ocr_match_key_normalizes_weekend_character_confusion(self):
+        self.assertEqual(wx.ocr_match_key("广州周未搭子"), "广州周末搭子")
+
+    def test_most_used_result_survives_a_missed_heading(self):
+        target = open_group.OcrLine("广州周未搭子吃喝玩乐群", 10, 20, 200, 50)
+        lines = [
+            target,
+            open_group.OcrLine("Internet search results", 10, 80, 200, 100),
+            open_group.OcrLine("广州周未搭子", 10, 120, 150, 140),
+        ]
+
+        self.assertEqual(
+            wx.find_exact_result(lines, "广州周末搭子", {"most_used", "groups"}),
+            target,
+        )
+
     def test_visible_group_member_identifiers_are_scoped_to_results(self):
         image = audit.Image.new("RGB", (1000, 800), "white")
         lines = [

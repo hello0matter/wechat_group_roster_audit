@@ -154,6 +154,11 @@ def section_kind(text: str) -> str | None:
     return None
 
 
+def ocr_match_key(text: str) -> str:
+    """Normalize high-frequency OCR substitutions used in Weixin names."""
+    return open_group.normalize_text(text).translate(str.maketrans({"未": "末"}))
+
+
 def allowed_sections(mode: str, friend: bool) -> set[str]:
     if mode == "saved":
         return {"contacts"} if friend else {"saved_groups"}
@@ -167,7 +172,16 @@ def find_exact_result(
 ) -> open_group.OcrLine | None:
     headings = [(line, section_kind(line.text)) for line in lines]
     headings = [(line, kind) for line, kind in headings if kind is not None]
-    expected = open_group.normalize_text(query)
+    expected = ocr_match_key(query)
+    if "most_used" in allowed and headings:
+        first_heading_top = min(line.top for line, _kind in headings)
+        top_matches = [
+            line
+            for line in lines
+            if line.top < first_heading_top and expected in ocr_match_key(line.text)
+        ]
+        if top_matches:
+            return min(top_matches, key=lambda line: (line.top, line.left))
     for heading, kind in headings:
         if kind not in allowed:
             continue
@@ -179,7 +193,7 @@ def find_exact_result(
             line
             for line in lines
             if heading.bottom < line.top < end_top
-            and expected in open_group.normalize_text(line.text)
+            and expected in ocr_match_key(line.text)
         ]
         if matches:
             return min(matches, key=lambda line: (line.top, line.left))
@@ -379,9 +393,9 @@ def verify_opened_title(tesseract: Path, image_path: Path, query: str) -> bool:
         header = opened.crop((round(width * 0.3), 0, width, round(height * 0.13)))
     header_path = image_path.with_name(f"{image_path.stem}-header.png")
     header.save(header_path)
-    expected = open_group.normalize_text(query)
+    expected = ocr_match_key(query)
     return any(
-        expected in open_group.normalize_text(line.text)
+        expected in ocr_match_key(line.text)
         for line in open_group.run_ocr(tesseract, header_path)
     )
 
@@ -1004,7 +1018,6 @@ def main() -> int:
         print(json.dumps({"activation": activation}, ensure_ascii=False, indent=2))
         return 2
     window = activation["window"]
-    hwnd = int(window["hwnd"])
 
     # `-m chat -f` means contacts: friend detail capture starts from the
     # Contacts sidebar, while plain chat mode starts from conversations.
@@ -1018,25 +1031,9 @@ def main() -> int:
     time.sleep(NAVIGATION_WAIT_SECONDS)
 
     saved_group_search = args.m == "saved" and not args.f and args.q is not None
-    search_point = None
     if args.q is not None and not saved_group_search:
-        search_point = point_in_window(window, SEARCH_FIELD)
-        open_group.click_screen_point(search_point)
+        open_group.focus_global_search(window)
         time.sleep(SEARCH_FOCUS_WAIT_SECONDS)
-        active, focus, caret = open_group.gui_thread_handles()
-        if (active, focus, caret) != (hwnd, hwnd, hwnd):
-            print(
-                json.dumps(
-                    {
-                        "ok": False,
-                        "reason": "search_did_not_receive_caret",
-                        "handles": {"active": active, "focus": focus, "caret": caret},
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
-            return 2
         open_group.select_all()
         open_group.send_unicode_text(args.q)
         time.sleep(

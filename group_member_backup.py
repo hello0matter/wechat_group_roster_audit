@@ -58,7 +58,7 @@ def parse_terms(value: str) -> tuple[str, ...]:
 
 def result_member_rows(image: Image.Image) -> list[open_group.OcrLine]:
     """Locate member result rows from avatar texture, independent of nickname OCR."""
-    left, right = round(image.width * 0.62), round(image.width * 0.69)
+    left, right = round(image.width * 0.72), round(image.width * 0.78)
     variation = [
         sum(ImageStat.Stat(image.crop((left, y, right, y + 1)).convert("RGB")).stddev)
         for y in range(image.height)
@@ -132,18 +132,22 @@ def replace_search_text(window: dict[str, object], value: str) -> None:
     time.sleep(SEARCH_WAIT_SECONDS)
 
 
+def weixin_has_keyboard_focus(hwnd: int) -> bool:
+    """Qt may expose keyboard focus while omitting its native caret handle."""
+    active, focus, _caret = open_group.gui_thread_handles()
+    return active == hwnd and focus == hwnd
+
+
 def open_named_group(
     window: dict[str, object], query: str, directory: Path, tesseract: Path
 ) -> dict[str, object]:
     """Open one group from global search without accepting non-group results."""
     open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
     time.sleep(wx.NAVIGATION_WAIT_SECONDS)
-    search_point = wx.point_in_window(window, wx.SEARCH_FIELD)
-    open_group.click_screen_point(search_point)
+    open_group.focus_global_search(window)
     time.sleep(wx.SEARCH_FOCUS_WAIT_SECONDS)
     hwnd = int(window["hwnd"])
-    active, focus, caret = open_group.gui_thread_handles()
-    if (active, focus, caret) != (hwnd, hwnd, hwnd):
+    if not weixin_has_keyboard_focus(hwnd):
         raise RuntimeError("global_search_not_focusable")
     open_group.select_all()
     open_group.send_unicode_text(query)
@@ -165,18 +169,60 @@ def open_named_group(
     crop_path = directory / ".group-search-results-enlarged.png"
     enlarged.save(crop_path)
     lines = open_group.run_ocr(tesseract, crop_path, psm=6, language="chi_sim+eng")
-    match = wx.find_exact_result(lines, query, {"most_used", "groups"})
+    match = wx.find_exact_result(
+        lines, query, {"most_used", "groups", "chat_history"}
+    )
+    top_limit = round(enlarged.height * 0.22)
+    used_top_fallback = False
+    if match is None:
+        expected = wx.ocr_match_key(query)
+        match = next(
+            (
+                line
+                for line in sorted(lines, key=lambda item: (item.top, item.left))
+                if line.top < top_limit and expected in wx.ocr_match_key(line.text)
+            ),
+            None,
+        )
+        used_top_fallback = match is not None
     crop_path.unlink(missing_ok=True)
     if match is None:
         raise RuntimeError("group_not_found_in_group_results")
-    match_x = crop_box[0] + (match.left + match.right) // (2 * GROUP_RESULTS_SCALE)
-    match_y = crop_box[1] + (match.top + match.bottom) // (2 * GROUP_RESULTS_SCALE)
-    result_point = wx.screen_point_from_capture(
-        window, image, match_x, match_y
+    headings = sorted(
+        (
+            (line, wx.section_kind(line.text))
+            for line in lines
+            if wx.section_kind(line.text) is not None
+        ),
+        key=lambda item: item[0].top,
     )
-    _, verified, _, opened_path = wx.click_result_and_verify_chat(
-        window, result_point, tesseract, directory, query
+    containing_section = next(
+        (
+            kind
+            for line, kind in reversed(headings)
+            if line.bottom < match.top
+        ),
+        None,
     )
+    if used_top_fallback or containing_section == "most_used":
+        selection_index = 0
+    else:
+        expected = wx.ocr_match_key(query)
+        candidate_rows: list[int] = []
+        for line in sorted(lines, key=lambda item: (item.top, item.left)):
+            if line.top > match.top + 8 or expected not in wx.ocr_match_key(line.text):
+                continue
+            center = (line.top + line.bottom) // 2
+            if not candidate_rows or center - candidate_rows[-1] > 12:
+                candidate_rows.append(center)
+        if not candidate_rows:
+            raise RuntimeError("group_result_keyboard_index_not_found")
+        selection_index = len(candidate_rows)
+    open_group.open_search_result_with_keyboard(window, selection_index)
+    time.sleep(wx.CHAT_OPEN_WAIT_SECONDS)
+    opened_path = directory / "opened.png"
+    wx.capture_live_window(window, opened_path)
+    verified = wx.verify_opened_title(tesseract, opened_path, query)
     if not verified:
         opened_lines = open_group.run_ocr(
             tesseract, opened_path, psm=11, language="chi_sim+eng"
@@ -233,9 +279,8 @@ def prepare_group_member_search(
 
     open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
     time.sleep(0.2)
-    active, focus, caret = open_group.gui_thread_handles()
     hwnd = int(window["hwnd"])
-    if (active, focus, caret) != (hwnd, hwnd, hwnd):
+    if not weixin_has_keyboard_focus(hwnd):
         show_all = next(
             (
                 line
@@ -257,8 +302,7 @@ def prepare_group_member_search(
         time.sleep(SETTINGS_WAIT_SECONDS)
         open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
         time.sleep(0.2)
-        active, focus, caret = open_group.gui_thread_handles()
-        if (active, focus, caret) != (hwnd, hwnd, hwnd):
+        if not weixin_has_keyboard_focus(hwnd):
             raise RuntimeError("group_member_search_not_focusable")
     probe.unlink(missing_ok=True)
     return window, image
@@ -369,7 +413,13 @@ def backup_open_group(
         lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
         rows = result_member_rows(image)
         if not rows:
-            probe.unlink(missing_ok=True)
+            label = (
+                re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-")
+                or "term"
+            )
+            empty_path = directory / f"members-{label}-empty.png"
+            probe.replace(empty_path)
+            outputs.append(str(empty_path.resolve()))
             decisions[term] = "empty"
             continue
         mode = selected_mode

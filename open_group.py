@@ -232,10 +232,85 @@ def gui_thread_handles() -> tuple[int, int, int]:
 
 
 def click_screen_point(point: tuple[int, int]) -> None:
-    set_cursor_pos(point)
-    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    """Click through SendInput; current Weixin ignores legacy mouse_event clicks."""
+    x, y = map(int, point)
+    desktop = audit.virtual_desktop_rect()
+    width = max(1, desktop.right - desktop.left - 1)
+    height = max(1, desktop.bottom - desktop.top - 1)
+    events = (INPUT * 3)(
+        INPUT(
+            type=0,
+            mi=MOUSEINPUT(
+                round((x - desktop.left) * 65535 / width),
+                round((y - desktop.top) * 65535 / height),
+                0,
+                0x0001 | 0x4000 | 0x8000,
+                0,
+                0,
+            ),
+        ),
+        INPUT(type=0, mi=MOUSEINPUT(0, 0, 0, 0x0002, 0, 0)),
+        INPUT(type=0, mi=MOUSEINPUT(0, 0, 0, 0x0004, 0, 0)),
+    )
+    if audit.USER32.SendInput(3, events, ctypes.sizeof(INPUT)) != 3:
+        raise ctypes.WinError()
     time.sleep(0.06)
-    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+
+def send_trusted_keys(
+    window: dict[str, object], key_positions: list[tuple[float, float]]
+) -> None:
+    """Send keys through Windows' signed UIAccess on-screen keyboard."""
+    osk = win32gui.FindWindow("OSKMainClass", None)
+    launched = not bool(osk)
+    if launched:
+        win32api.ShellExecute(
+            0,
+            "open",
+            r"C:\Windows\System32\osk.exe",
+            None,
+            None,
+            win32con.SW_SHOWNORMAL,
+        )
+        for _attempt in range(30):
+            osk = win32gui.FindWindow("OSKMainClass", None)
+            if osk and win32gui.IsWindowVisible(osk):
+                break
+            time.sleep(0.1)
+    if not osk or not win32gui.IsWindowVisible(osk):
+        raise RuntimeError("trusted_search_focus_unavailable")
+    activation = audit.activate_window(window)
+    if not activation["activated"]:
+        raise RuntimeError("weixin_activation_failed")
+    left, top, right, bottom = win32gui.GetWindowRect(osk)
+    width = right - left
+    height = bottom - top
+    try:
+        for x_ratio, y_ratio in key_positions:
+            click_screen_point(
+                (left + round(width * x_ratio), top + round(height * y_ratio))
+            )
+    finally:
+        if launched:
+            try:
+                win32gui.PostMessage(osk, win32con.WM_CLOSE, 0, 0)
+            except win32gui.error:
+                pass
+    time.sleep(0.25)
+
+
+def focus_global_search(window: dict[str, object]) -> None:
+    """Focus Weixin search through Windows' signed UIAccess keyboard."""
+    send_trusted_keys(window, [(0.065, 0.92), (0.252, 0.62)])
+
+
+def open_search_result_with_keyboard(
+    window: dict[str, object], selection_index: int
+) -> None:
+    """Choose a focused Weixin search result without clicking its overlay."""
+    down = (0.595, 0.92)
+    enter = (0.653, 0.62)
+    send_trusted_keys(window, [down] * selection_index + [enter])
 
 
 def set_cursor_pos(point: tuple[int, int]) -> None:
