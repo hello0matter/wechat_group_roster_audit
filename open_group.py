@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import ctypes
 import json
 import shutil
@@ -103,8 +102,16 @@ def parse_tsv_lines(tsv: str) -> list[OcrLine]:
     grouped: dict[tuple[int, int, int, int], list[tuple[int, str, int, int, int, int]]] = (
         defaultdict(list)
     )
-    for row in csv.DictReader(tsv.splitlines(), delimiter="\t"):
-        text = (row.get("text") or "").strip()
+    rows = tsv.splitlines()
+    if not rows:
+        return []
+    headers = rows[0].split("\t")
+    for raw_row in rows[1:]:
+        values = raw_row.split("\t", len(headers) - 1)
+        if len(values) != len(headers):
+            continue
+        row = dict(zip(headers, values, strict=True))
+        text = row.get("text", "").strip()
         if not text or row.get("level") != "5":
             continue
         try:

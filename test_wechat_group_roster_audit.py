@@ -475,7 +475,7 @@ class WxCommandTests(unittest.TestCase):
         self.assertIn('result.json', launcher)
 
     def test_contacts_navigation_uses_the_calibrated_sidebar_position(self):
-        self.assertEqual(wx.point_in_window({"left": 500, "top": 262, "width": 1344, "height": 1031}, wx.CONTACTS_NAV), (556, 484))
+        self.assertEqual(wx.point_in_window({"left": 500, "top": 262, "width": 1344, "height": 1031}, wx.CONTACTS_NAV), (567, 504))
 
     @patch("wx.audit.visible_weixin_windows")
     def test_auto_selects_only_running_weixin_when_config_pid_is_stale(self, visible_windows):

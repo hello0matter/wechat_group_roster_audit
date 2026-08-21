@@ -17,7 +17,7 @@ import wechat_group_roster_audit as audit
 
 
 CHAT_NAV = (0.035, 0.14)
-CONTACTS_NAV = (0.042, 0.215)
+CONTACTS_NAV = (0.05, 0.235)
 SEARCH_FIELD = (0.205, 0.07)
 LIST_SCROLL_POINT = (0.25, 0.72)
 LEFT_PANE = (0.065, 0.035, 0.36, 0.96)
@@ -116,6 +116,8 @@ def left_pane_lines(
 
 def section_kind(text: str) -> str | None:
     normalized = open_group.normalize_text(text)
+    if normalized[:1] in {">", "v", "y"}:
+        normalized = normalized[1:]
     if normalized in {"mostused", "最常使用"}:
         return "most_used"
     if "savedgroup" in normalized or "保存的群聊" in normalized:
@@ -505,14 +507,21 @@ def _contact_rows(lines: list[open_group.OcrLine], image: Image.Image) -> list[o
     """Return likely contact rows from the left pane, excluding section headings."""
     rows: list[open_group.OcrLine] = []
     max_top = round(image.height * CONTACT_ROW_MAX_TOP_RATIO)
+    contact_heading = next(
+        (line for line in left_pane_lines(lines, image) if section_kind(line.text) == "contacts"),
+        None,
+    )
+    min_top = max(CONTACT_ROW_MIN_TOP, contact_heading.bottom if contact_heading else 0)
     for line in left_pane_lines(lines, image):
         text = open_group.normalize_text(line.text)
-        if line.top < CONTACT_ROW_MIN_TOP or line.top > max_top or not text:
+        if line.top < min_top or line.top > max_top or not text:
             continue
         if section_kind(line.text) is not None:
             continue
+        if text in {"starred", "星标朋友"}:
+            continue
         # Names are in the middle/right of the row; ignore tiny labels at the edge.
-        if line.left < round(image.width * 0.08) or line.left > round(image.width * 0.34):
+        if line.left < round(image.width * 0.17) or line.left > round(image.width * 0.34):
             continue
         if rows and line.top - rows[-1].top < CONTACT_ROW_MIN_GAP:
             if line.right > rows[-1].right:
@@ -520,6 +529,36 @@ def _contact_rows(lines: list[open_group.OcrLine], image: Image.Image) -> list[o
             continue
         rows.append(line)
     return rows
+
+
+def expand_contacts(
+    window: dict[str, object], directory: Path, tesseract: Path
+) -> bool:
+    """Open the Contacts disclosure section before scanning individual rows."""
+    frame = directory / ".contacts-expand.png"
+    full_image, _ = capture_live_window(window, frame)
+    lines = open_group.run_ocr(tesseract, frame, psm=11, language="chi_sim+eng")
+    heading = next((line for line in lines if section_kind(line.text) == "contacts"), None)
+    if heading is None:
+        frame.unlink(missing_ok=True)
+        return False
+    normalized = open_group.normalize_text(heading.text)
+    if normalized[:1] in {">", "v", "y"}:
+        point = screen_point_from_capture(
+            window,
+            full_image,
+            (heading.left + heading.right) // 2,
+            (heading.top + heading.bottom) // 2,
+        )
+        open_group.click_screen_point(point)
+        time.sleep(NAVIGATION_WAIT_SECONDS)
+    frame.unlink(missing_ok=True)
+    verify = directory / ".contacts-expand-verify.png"
+    verify_image, _ = capture_live_window(window, verify)
+    verify_lines = open_group.run_ocr(tesseract, verify, psm=11, language="chi_sim+eng")
+    rows = _contact_rows(verify_lines, verify_image)
+    verify.unlink(missing_ok=True)
+    return heading is not None
 
 
 def save_contact_detail_pages(
@@ -531,8 +570,7 @@ def save_contact_detail_pages(
     """Open contacts one by one and save the resulting detail panel screenshots."""
     outputs: list[str] = []
     limit = maximum or MAX_PAGES
-    seen: set[tuple[int, str]] = set()
-    scroll_contacts_to_top(window)
+    seen: set[str] = set()
     for _page in range(MAX_PAGES):
         if len(outputs) >= limit:
             return outputs, "maximum_contacts"
@@ -547,10 +585,11 @@ def save_contact_detail_pages(
             ocr_path.unlink(missing_ok=True)
         rows = _contact_rows(lines, full_image)
         if not rows:
+            full_image.save(directory / ".contacts-detail-failed.png")
             return outputs, "contacts_not_detected"
         new_row = False
         for row in rows:
-            key = (row.top, open_group.normalize_text(row.text))
+            key = open_group.normalize_text(row.text)
             if key in seen:
                 continue
             seen.add(key)
@@ -563,21 +602,18 @@ def save_contact_detail_pages(
             output = directory / f"contact-{len(outputs) + 1:03d}.png"
             capture_live_window(window, output)
             outputs.append(str(output.resolve()))
-            # Return to the contacts list without restoring/maximizing the window.
-            open_group.click_screen_point(point_in_window(window, CONTACTS_NAV))
-            time.sleep(NAVIGATION_WAIT_SECONDS)
             if len(outputs) >= limit:
                 return outputs, "maximum_contacts"
         if not new_row:
             return outputs, "contacts_exhausted"
-        before = full_image
+        before, _ = crop_left_pane(full_image)
         scroll_list(window)
         time.sleep(LIST_SCROLL_SETTLE_SECONDS)
         after_path = directory / ".contacts-detail-after.png"
-        after, _ = capture_live_window(window, after_path)
+        after_full, _ = capture_live_window(window, after_path)
         after_path.unlink(missing_ok=True)
-        if not page_changed(before, after) or scrollbar_reached_bottom(crop_left_pane(after)[0]):
-            # One final visible batch may have been handled; stop at the bottom.
+        after, _ = crop_left_pane(after_full)
+        if not page_changed(before, after):
             return outputs, "scrollbar_bottom"
     return outputs, "maximum_pages"
 
@@ -754,6 +790,9 @@ def main() -> int:
         if tesseract is None:
             print("未找到 Tesseract，联系人详情定位需要 OCR。")
             return 2
+        if not expand_contacts(window, args.o, tesseract):
+            print("未找到或无法展开 Contacts/联系人分区。")
+            return 3
         outputs, stop_reason = save_contact_detail_pages(window, args.o, args.s, tesseract)
         emit_result(
             args.o,
