@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -254,7 +255,7 @@ def click_screen_point(point: tuple[int, int]) -> None:
     )
     if audit.USER32.SendInput(3, events, ctypes.sizeof(INPUT)) != 3:
         raise ctypes.WinError()
-    time.sleep(0.06)
+    time.sleep(max(0.0, float(os.environ.get("WECHAT_CLICK_DELAY", "0.06"))))
 
 
 def send_trusted_keys(

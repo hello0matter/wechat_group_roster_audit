@@ -8,11 +8,14 @@ import queue
 import subprocess
 import sys
 import threading
+import ctypes
+import ctypes.wintypes
 import tkinter as tk
 import shutil
 import tempfile
 import urllib.request
 import zipfile
+import psutil
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -62,6 +65,9 @@ class App(tk.Tk):
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.active_processes: set[subprocess.Popen[str]] = set()
         self.backup_running = False
+        self.backup_paused = False
+        self.hotkey_thread_id = 0
+        self.hotkey_shutdown = threading.Event()
         bundled_root = ROOT / "pywechat2"
         default_root = bundled_root if bundled_root.is_dir() else DEFAULT_PYWECHAT
         self.root_var = tk.StringVar(value=str(self.config_data.get("pywechat_root", default_root)))
@@ -80,8 +86,16 @@ class App(tk.Tk):
         self.people_limit = tk.IntVar(value=int(self.config_data.get("people_limit", 1000)))
         self.group_limit = tk.IntVar(value=int(self.config_data.get("group_limit", 1000)))
         self.member_pages = tk.IntVar(value=int(self.config_data.get("member_pages", 1000)))
+        self.click_delay = tk.DoubleVar(value=float(self.config_data.get("click_delay", 0.06)))
+        self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.30)))
+        self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))
+        self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
+        self.hotkey_start = tk.StringVar(value=str(self.config_data.get("hotkey_start", "Ctrl+Shift+Q")))
+        self.hotkey_pause = tk.StringVar(value=str(self.config_data.get("hotkey_pause", "Ctrl+Shift+E")))
+        self.hotkey_stop = tk.StringVar(value=str(self.config_data.get("hotkey_stop", "Ctrl+Shift+S")))
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.close_app)
+        self._start_hotkeys()
         self.after(150, self._poll)
         self.refresh_versions()
 
@@ -145,6 +159,14 @@ class App(tk.Tk):
         ttk.Spinbox(limits, from_=1, to=1000, textvariable=self.member_pages, width=8).pack(side="left", padx=(5, 14))
         self.start_button = ttk.Button(limits, text="开始选中任务", command=self.run_selected)
         self.start_button.pack(side="right")
+        controls = ttk.Frame(actions)
+        controls.grid(row=5, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self.pause_button = ttk.Button(controls, text="暂停", command=self.toggle_pause, state="disabled")
+        self.pause_button.pack(side="left")
+        self.stop_button = ttk.Button(controls, text="停止", command=self.stop_backup, state="disabled")
+        self.stop_button.pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="全局设置", command=self.open_global_settings).pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="保存配置", command=self.save_config).pack(side="left", padx=(8, 0))
         actions.columnconfigure(1, weight=1)
 
         self.log = tk.Text(main, height=12, state="disabled", wrap="word")
@@ -173,10 +195,98 @@ class App(tk.Tk):
             "people_limit": self.people_limit.get(),
             "group_limit": self.group_limit.get(),
             "member_pages": self.member_pages.get(),
+            "click_delay": self.click_delay.get(),
+            "scroll_delay": self.scroll_delay.get(),
+            "profile_delay": self.profile_delay.get(),
+            "group_error_policy": self.group_error_policy.get(),
+            "hotkey_start": self.hotkey_start.get(),
+            "hotkey_pause": self.hotkey_pause.get(),
+            "hotkey_stop": self.hotkey_stop.get(),
         }
         CONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.config_data = data
-        self.log_text("代理和路径配置已保存")
+        self.log_text("全局配置已保存")
+
+    def open_global_settings(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("全局设置")
+        dialog.transient(self)
+        dialog.grab_set()
+        body = ttk.Frame(dialog, padding=14)
+        body.pack(fill="both", expand=True)
+        rows = (("点击后延迟（秒）", self.click_delay), ("滚动后延迟（秒）", self.scroll_delay), ("打开资料后延迟（秒）", self.profile_delay))
+        for row, (label, variable) in enumerate(rows):
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
+        ttk.Label(body, text="群成员失败策略").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=3, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=3, column=2, sticky="w")
+        hotkeys = (("启动快捷键", self.hotkey_start), ("暂停快捷键", self.hotkey_pause), ("停止快捷键", self.hotkey_stop))
+        for row, (label, variable) in enumerate(hotkeys, 4):
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Entry(body, textvariable=variable, width=18).grid(row=row, column=1, padx=10, pady=4)
+        buttons = ttk.Frame(body)
+        buttons.grid(row=7, column=0, columnspan=3, pady=(12, 0), sticky="e")
+        ttk.Button(buttons, text="保存并关闭", command=lambda: (self.save_config(), self._restart_hotkeys(), dialog.destroy())).pack(side="right")
+        ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
+
+    def _hotkey_parts(self, value: str) -> tuple[int, int]:
+        names = [part.strip().upper() for part in value.replace(" ", "").split("+") if part.strip()]
+        modifiers = 0
+        for name, flag in (("CTRL", 0x0002), ("SHIFT", 0x0004), ("ALT", 0x0001), ("WIN", 0x0008)):
+            if name in names:
+                modifiers |= flag
+        key = names[-1] if names else "Q"
+        return modifiers, ord(key[-1])
+
+    def _start_hotkeys(self) -> None:
+        self.hotkey_shutdown.clear()
+        def worker() -> None:
+            user32 = ctypes.windll.user32
+            thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+            self.hotkey_thread_id = thread_id
+            bindings = ((1, self.hotkey_start.get(), "hotkey_start"), (2, self.hotkey_pause.get(), "hotkey_pause"), (3, self.hotkey_stop.get(), "hotkey_stop"))
+            for hotkey_id, value, _name in bindings:
+                modifiers, key = self._hotkey_parts(value)
+                user32.RegisterHotKey(0, hotkey_id, modifiers, key)
+            message = ctypes.wintypes.MSG()
+            while not self.hotkey_shutdown.is_set() and user32.GetMessageW(ctypes.byref(message), 0, 0, 0) > 0:
+                if message.message == 0x0312:
+                    self.events.put((bindings[message.wParam - 1][2], None))
+            for hotkey_id, _value, _name in bindings:
+                user32.UnregisterHotKey(0, hotkey_id)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _restart_hotkeys(self) -> None:
+        self.hotkey_shutdown.set()
+        if self.hotkey_thread_id:
+            ctypes.windll.user32.PostThreadMessageW(self.hotkey_thread_id, 0x0012, 0, 0)
+        self._start_hotkeys()
+
+    def toggle_pause(self) -> None:
+        if not self.backup_running or not self.active_processes:
+            return
+        for process in list(self.active_processes):
+            try:
+                target = psutil.Process(process.pid)
+                if self.backup_paused:
+                    target.resume()
+                else:
+                    target.suspend()
+            except (OSError, psutil.Error):
+                pass
+        self.backup_paused = not self.backup_paused
+        self.pause_button.configure(text="继续" if self.backup_paused else "暂停")
+        self.status_var.set("已暂停" if self.backup_paused else "正在执行选中任务...")
+
+    def stop_backup(self) -> None:
+        for process in list(self.active_processes):
+            self._kill_process_tree(process)
+        self.status_var.set("已停止")
+
+    def _kill_process_tree(self, process: subprocess.Popen[str]) -> None:
+        if process.poll() is None:
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False)
 
     def choose_root(self) -> None:
         selected = filedialog.askdirectory(initialdir=self.root_var.get())
@@ -330,14 +440,24 @@ class App(tk.Tk):
             "-o",
             str(output),
         ]
+        env = proxy_env({"mode": self.proxy_mode.get(), "host": self.proxy_host.get(), "port": self.proxy_port.get()})
+        env.update({
+            "WECHAT_CLICK_DELAY": str(self.click_delay.get()),
+            "WECHAT_SCROLL_DELAY": str(self.scroll_delay.get()),
+            "WECHAT_PROFILE_DELAY": str(self.profile_delay.get()),
+            "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
+        })
         self.status_var.set("正在执行选中任务...")
         self.backup_running = True
+        self.backup_paused = False
         self.start_button.state(["disabled"])
+        self.pause_button.state(["!disabled"])
+        self.stop_button.state(["!disabled"])
         def work() -> None:
             process = subprocess.Popen(
                 args,
                 cwd=ROOT,
-                env=proxy_env({"mode": self.proxy_mode.get(), "host": self.proxy_host.get(), "port": self.proxy_port.get()}),
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -357,6 +477,9 @@ class App(tk.Tk):
 
     def close_app(self) -> None:
         """Stop child runners before closing so no automation remains behind."""
+        self.hotkey_shutdown.set()
+        if self.hotkey_thread_id:
+            ctypes.windll.user32.PostThreadMessageW(self.hotkey_thread_id, 0x0012, 0, 0)
         for process in list(self.active_processes):
             if process.poll() is None:
                 try:
@@ -389,7 +512,17 @@ class App(tk.Tk):
                     self.refresh_versions()
                 elif kind == "backup_done":
                     self.backup_running = False
+                    self.backup_paused = False
                     self.start_button.state(["!disabled"])
+                    self.pause_button.state(["disabled"])
+                    self.stop_button.state(["disabled"])
+                    self.pause_button.configure(text="暂停")
+                elif kind == "hotkey_start":
+                    self.run_selected()
+                elif kind == "hotkey_pause":
+                    self.toggle_pause()
+                elif kind == "hotkey_stop":
+                    self.stop_backup()
         except queue.Empty:
             pass
         self.after(150, self._poll)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import string
 import time
@@ -42,6 +43,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("-p", type=int, help="explicit Weixin PID")
     result.add_argument("--tesseract", type=Path)
     return result
+
+
+def wait_seconds(name: str, default: float) -> float:
+    return max(0.0, float(os.environ.get(name, str(default))))
 
 
 def parse_terms(value: str) -> tuple[str, ...]:
@@ -121,7 +126,7 @@ def scroll_member_results(window: dict[str, object], *, upward: bool = False) ->
         12000 if upward else -12000,
         0,
     )
-    time.sleep(SCROLL_WAIT_SECONDS)
+    time.sleep(wait_seconds("WECHAT_SCROLL_DELAY", SCROLL_WAIT_SECONDS))
 
 
 def replace_search_text(window: dict[str, object], value: str) -> None:
@@ -359,7 +364,7 @@ def save_detail_pages(
                     (row.top + row.bottom) // 2,
                 )
             )
-            time.sleep(PROFILE_WAIT_SECONDS)
+            time.sleep(wait_seconds("WECHAT_PROFILE_DELAY", PROFILE_WAIT_SECONDS))
             candidate = directory / ".member-profile.png"
             candidate_image, _ = wx.capture_live_window(window, candidate)
             lines = open_group.run_ocr(

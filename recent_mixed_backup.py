@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 import time
 from pathlib import Path
 
@@ -170,14 +171,26 @@ def save_recent_mixed(
                 return_to_list()
                 continue
             group_dir = safe_group_directory(directory / "groups", len(groups) + 1, title)
-            result = group_member_backup.backup_open_group(
-                window,
-                group_dir,
-                member_terms,
-                member_mode,
-                member_pages,
-                tesseract,
-            )
+            try:
+                result = group_member_backup.backup_open_group(
+                    window,
+                    group_dir,
+                    member_terms,
+                    member_mode,
+                    member_pages,
+                    tesseract,
+                )
+            except RuntimeError as error:
+                result = {"ok": False, "reason": str(error), "pages": []}
+                if os.environ.get("WECHAT_GROUP_ERROR_POLICY", "skip") == "stop":
+                    groups.append({**result, "title": title})
+                    return {
+                        "ok": bool(people or groups),
+                        "people": people,
+                        "groups": groups,
+                        "stop_reason": "group_error_stop",
+                        "pages_scanned": page_index + 1,
+                    }
             result["title"] = title
             groups.append(result)
             if title_key:

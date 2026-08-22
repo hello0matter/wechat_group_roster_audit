@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import time
@@ -30,6 +31,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("-n", "--people-limit", type=int, default=1000)
     result.add_argument("-G", "--group-limit", type=int, default=1000)
     result.add_argument("-s", "--member-pages", type=int, default=1000)
+    result.add_argument("-E", "--group-error", choices=("skip", "stop"), default="skip")
     result.add_argument("-o", "--output", type=Path, default=Path("artifacts/workflow"))
     result.add_argument("-p", "--pid", type=int)
     result.add_argument("--tesseract", type=Path)
@@ -123,6 +125,10 @@ def backup_named_groups(
             )
         except RuntimeError as error:
             result = {"ok": False, "reason": str(error), "pages": []}
+            if os.environ.get("WECHAT_GROUP_ERROR_POLICY", "skip") == "stop":
+                result["title"] = name
+                results.append(result)
+                break
         result["title"] = name
         results.append(result)
     return results
@@ -132,6 +138,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     tasks = parse_tasks(args.tasks)
     group_filters = parse_csv(args.groups)
     terms = group_member_backup.parse_terms(args.terms)
+    os.environ["WECHAT_GROUP_ERROR_POLICY"] = args.group_error
     if not tasks:
         raise ValueError("at least one task is required")
     if not terms and ({"recent_groups", "saved_groups"} & set(tasks)):
