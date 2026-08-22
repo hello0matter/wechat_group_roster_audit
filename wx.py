@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -824,11 +825,29 @@ def save_contact_detail_pages(
     maximum: int | None,
     tesseract: Path,
 ) -> tuple[list[str], str]:
-    """Open each visible contact, save its profile, then continue from the list."""
+    """Open contacts using a fresh screenshot for every click.
+
+    Returning through the Contacts navigation can reset or partially restore
+    the list. Never reuse stale row coordinates: identify each row from its
+    current avatar crop, skip rows already attempted, and only scroll after
+    every currently visible row has been handled.
+    """
     outputs: list[str] = []
     limit = maximum or MAX_PAGES
     seen_identifiers: set[str] = set()
-    for index in range(MAX_PAGES):
+    row_cursor = 0
+    probe_index = 0
+
+    def probe(name: str, image: Image.Image, **fields: object) -> None:
+        nonlocal probe_index
+        if not os.environ.get("WECHAT_DEBUG_PROBES"):
+            return
+        probe_index += 1
+        image.save(directory / f"contact-probe-{probe_index:04d}-{name}.png")
+        with (directory / "contact-probes.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"step": probe_index, "name": name, **fields}, ensure_ascii=False) + "\n")
+
+    for _page in range(MAX_PAGES):
         if len(outputs) >= limit:
             return outputs, "maximum_contacts"
         frame = directory / ".contacts-list.png"
@@ -843,44 +862,46 @@ def save_contact_detail_pages(
         rows = _contact_rows(lines, full_image)
         if not rows:
             return outputs, "contacts_exhausted"
-        for row in rows:
-            point = screen_point_from_capture(
-                window,
-                full_image,
-                (row.left + row.right) // 2,
-                row.top + max(8, (row.bottom - row.top) // 3),
-            )
-            open_group.click_screen_point(point)
-            time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
-            candidate = directory / ".contact-candidate.png"
-            candidate_image, _ = capture_live_window(window, candidate)
-            candidate_lines = open_group.run_ocr(
-                tesseract, candidate, psm=11, language="chi_sim+eng"
-            )
-            identifier = contact_identifier(candidate_lines, candidate_image)
-            if identifier is not None and identifier not in seen_identifiers:
-                seen_identifiers.add(identifier)
-                output = directory / f"contact-{len(outputs) + 1:03d}.png"
-                candidate.replace(output)
-                outputs.append(str(output.resolve()))
-            else:
-                candidate.unlink(missing_ok=True)
-            # Esc can close or blank the Qt window on some Weixin builds.
-            # Re-enter Contacts explicitly, then restore the page offset.
-            open_group.click_screen_point(sidebar_point(window, CONTACTS_NAV))
-            time.sleep(NAVIGATION_WAIT_SECONDS)
-            for _ in range(index):
-                scroll_list(window)
-            if len(outputs) >= limit:
-                return outputs, "maximum_contacts"
-        before, _ = crop_left_pane(full_image)
-        scroll_list(window)
-        after_path = directory / ".contacts-after.png"
-        after_full, _ = capture_live_window(window, after_path)
-        after_path.unlink(missing_ok=True)
-        after, _ = crop_left_pane(after_full)
-        if not page_changed(before, after):
-            return outputs, "scrollbar_bottom"
+        if row_cursor >= len(rows):
+            before, _ = crop_left_pane(full_image)
+            probe("scroll-before", full_image, rows=len(rows), row_cursor=row_cursor)
+            scroll_list(window)
+            after_path = directory / ".contacts-after.png"
+            after_full, _ = capture_live_window(window, after_path)
+            after_path.unlink(missing_ok=True)
+            after, _ = crop_left_pane(after_full)
+            probe("scroll-after", after_full, changed=page_changed(before, after))
+            if not page_changed(before, after):
+                return outputs, "scrollbar_bottom"
+            row_cursor = 0
+            continue
+        row = rows[row_cursor]
+        row_index = row_cursor
+        row_cursor += 1
+        click_x = (row.left + row.right) // 2
+        click_y = row.top + max(8, (row.bottom - row.top) // 3)
+        probe("list-before-click", full_image, row_index=row_index, row_top=row.top, click_x=click_x, click_y=click_y)
+        open_group.click_screen_point(
+            screen_point_from_capture(window, full_image, click_x, click_y)
+        )
+        time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
+        candidate = directory / ".contact-candidate.png"
+        candidate_image, _ = capture_live_window(window, candidate)
+        candidate_lines = open_group.run_ocr(tesseract, candidate, psm=11, language="chi_sim+eng")
+        identifier = contact_identifier(candidate_lines, candidate_image)
+        probe("profile-after-click", candidate_image, identifier=identifier, row_index=row_index)
+        if identifier is not None and identifier not in seen_identifiers:
+            seen_identifiers.add(identifier)
+            output = directory / f"contact-{len(outputs) + 1:03d}.png"
+            candidate.replace(output)
+            outputs.append(str(output.resolve()))
+        else:
+            candidate.unlink(missing_ok=True)
+        open_group.click_screen_point(sidebar_point(window, CONTACTS_NAV))
+        time.sleep(NAVIGATION_WAIT_SECONDS)
+        if len(outputs) >= limit:
+            return outputs, "maximum_contacts"
+        continue
     return outputs, "maximum_pages"
 
 
