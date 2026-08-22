@@ -865,8 +865,12 @@ def save_contact_detail_pages(
                 outputs.append(str(output.resolve()))
             else:
                 candidate.unlink(missing_ok=True)
-            open_group.press_escape()
-            time.sleep(0.18)
+            # Esc can close or blank the Qt window on some Weixin builds.
+            # Re-enter Contacts explicitly, then restore the page offset.
+            open_group.click_screen_point(sidebar_point(window, CONTACTS_NAV))
+            time.sleep(NAVIGATION_WAIT_SECONDS)
+            for _ in range(index):
+                scroll_list(window)
             if len(outputs) >= limit:
                 return outputs, "maximum_contacts"
         before, _ = crop_left_pane(full_image)
