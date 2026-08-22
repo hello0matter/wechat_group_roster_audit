@@ -387,6 +387,13 @@ def capture_live_window(
     open_group.desktop_window_capture(window, output)
     with Image.open(output) as captured:
         image = captured.copy()
+    # A blank Qt surface is recoverable by the same one-cycle taskbar action
+    # users perform manually. Retry once before any OCR or mouse operation.
+    if max(ImageStat.Stat(image.convert("RGB")).stddev) < 1.0:
+        if audit.recover_blank_surface(window):
+            open_group.desktop_window_capture(window, output)
+            with Image.open(output) as captured:
+                image = captured.copy()
     return image, {"source": "screen"}
 
 

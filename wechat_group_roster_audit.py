@@ -165,6 +165,8 @@ def explain_window_selection_failure(target_pid: int = 0) -> str:
 
 
 def activate_window(window: dict[str, object]) -> dict[str, object]:
+    if "hwnd" not in window:
+        return False
     hwnd = int(window["hwnd"])
     was_hidden = not bool(win32gui.IsWindowVisible(hwnd))
     was_minimized = bool(win32gui.IsIconic(hwnd))
@@ -251,6 +253,27 @@ def activate_window(window: dict[str, object]) -> dict[str, object]:
         "input_threads_attached": attached,
         "window": refreshed,
     }
+
+
+def recover_blank_surface(window: dict[str, object]) -> bool:
+    """Trigger the same repaint as clicking the taskbar button once.
+
+    Weixin can keep a visible but blank Qt surface after an auxiliary panel
+    closes. A single minimize/restore cycle repaints it; no maximize or size
+    change is performed.
+    """
+    if "hwnd" not in window:
+        return False
+    hwnd = int(window["hwnd"])
+    if not win32gui.IsWindow(hwnd):
+        return False
+    USER32.ShowWindow(hwnd, win32con.SW_MINIMIZE)
+    time.sleep(0.25)
+    USER32.PostMessageW(hwnd, win32con.WM_SYSCOMMAND, win32con.SC_RESTORE, 0)
+    time.sleep(0.8)
+    USER32.BringWindowToTop(hwnd)
+    USER32.SetForegroundWindow(hwnd)
+    return win32gui.GetForegroundWindow() == hwnd
 
 
 def virtual_desktop_rect() -> PixelRect:
