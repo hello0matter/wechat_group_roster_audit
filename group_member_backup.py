@@ -19,7 +19,7 @@ import wechat_group_roster_audit as audit
 import wx
 
 
-DEFAULT_TERMS = tuple(string.ascii_lowercase) + ("1",)
+DEFAULT_TERMS = ("1",) + tuple(string.ascii_lowercase)
 GROUP_SEARCH_POINT = (0.80, 0.15)
 GROUP_RESULT_SCROLL_POINT = (0.79, 0.72)
 PROFILE_DISMISS_POINT = (0.50, 0.72)
@@ -37,7 +37,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Capture visible members of the opened group")
     result.add_argument("-g", "--group", help="group name or unique visible fragment")
     result.add_argument("-M", "--member-mode", choices=("auto", "list", "detail"), default="auto")
-    result.add_argument("-k", "--terms", default="a-z,1", help="member search terms")
+    result.add_argument("-k", "--terms", default="1,a-z", help="member search terms")
     result.add_argument("-s", type=int, default=MAX_PAGES, metavar="N", help="maximum pages per term")
     result.add_argument("-o", type=Path, default=Path("artifacts/group-members"))
     result.add_argument("-p", type=int, help="explicit Weixin PID")
@@ -356,12 +356,15 @@ def save_detail_pages(
             page_path.unlink(missing_ok=True)
             break
         for row in rows:
+            # The avatar's upper third opens the profile card. The vertical
+            # center can hit the lower action area in newer Weixin builds.
+            click_y = row.top + max(8, (row.bottom - row.top) // 3)
             open_group.click_screen_point(
                 wx.screen_point_from_capture(
                     window,
                     image,
                     (row.left + row.right) // 2,
-                    (row.top + row.bottom) // 2,
+                    click_y,
                 )
             )
             time.sleep(wait_seconds("WECHAT_PROFILE_DELAY", PROFILE_WAIT_SECONDS))

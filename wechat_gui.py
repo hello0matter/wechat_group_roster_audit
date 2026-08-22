@@ -81,7 +81,7 @@ class App(tk.Tk):
         self.task_contacts = tk.BooleanVar(value=bool(self.config_data.get("task_contacts", True)))
         self.task_saved_groups = tk.BooleanVar(value=bool(self.config_data.get("task_saved_groups", False)))
         self.group_filters = tk.StringVar(value=str(self.config_data.get("group_filters", "")))
-        self.member_terms = tk.StringVar(value=str(self.config_data.get("member_terms", "a-z,1")))
+        self.member_terms = tk.StringVar(value=str(self.config_data.get("member_terms", "1,a-z")))
         self.member_mode = tk.StringVar(value=str(self.config_data.get("member_mode", "auto")))
         self.people_limit = tk.IntVar(value=int(self.config_data.get("people_limit", 1000)))
         self.group_limit = tk.IntVar(value=int(self.config_data.get("group_limit", 1000)))

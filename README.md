@@ -77,14 +77,14 @@ python wx.py -r -s 10 -o artifacts/recent-contacts
 # 组合工作流：最近会话只向下扫描一次，同时分流联系人和群
 python workflow_runner.py -t recent_people,recent_groups -n 1000 -G 1000
 
-# 四种来源全部执行；群成员依次搜索 a-z 和 1
-python workflow_runner.py -t recent_people,recent_groups,contacts,saved_groups -k "a-z,1"
+# 四种来源全部执行；群成员先搜索 1，再搜索 a-z
+python workflow_runner.py -t recent_people,recent_groups,contacts,saved_groups -k "1,a-z"
 
 # 只处理群名包含这些关键字的群，避免全量遍历
-python workflow_runner.py -t recent_groups,saved_groups -g "饭团,广州周末" -k "a-z,1"
+python workflow_runner.py -t recent_groups,saved_groups -g "饭团,广州周末" -k "1,a-z"
 
 # 已经手动打开一个群时，直接备份当前群；每个搜索词最多 3 页
-python group_member_backup.py -M auto -k "a-z,1" -s 3
+python group_member_backup.py -M auto -k "1,a-z" -s 3
 
 # 使用 pywechat2 UIA 点击联系人并保存右侧资料截图（默认最多 10 个）
 python uia_backup.py -s 10 -o artifacts/uia-contacts
@@ -134,8 +134,8 @@ $env:PYWECHAT2_ROOT = "D:\tmp\anjian\pj\st\tmp\pywechat2"
 数据库；手机号等未显示字段不会被读取。
 群成员支持三种策略：`auto` 会先观察搜索结果；直接出现 `Weixin ID/微信号` 时使用 `list`
 策略，整页快速向下截图；没有直接显示时使用 `detail` 策略，逐项打开资料卡截图。`list` 和
-`detail` 也可以在 GUI 或 `-M` 参数中强制选择。默认成员搜索词 `a-z,1` 会展开为 26 个字母
-加数字 `1`，不是一个字面字符串。逐项模式按微信号去重；整页模式保留原始页面，便于人工
+`detail` 也可以在 GUI 或 `-M` 参数中强制选择。默认成员搜索词 `1,a-z` 会先搜索数字 `1`，
+再展开为 26 个字母，不是一个字面字符串。逐项模式按微信号去重；整页模式保留原始页面，便于人工
 核对昵称、头像和顺序。没有匹配成员时也会保留 `members-*-empty.png`，用于确认搜索词确实
 输入成功。
 

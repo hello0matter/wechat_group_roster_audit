@@ -565,6 +565,11 @@ class WxCommandTests(unittest.TestCase):
 
         self.assertEqual(terms, (*tuple("abcdefghijklmnopqrstuvwxyz"), "1"))
 
+    def test_group_member_default_terms_start_with_one(self):
+        args = group_member_backup.parser().parse_args([])
+
+        self.assertEqual(group_member_backup.parse_terms(args.terms)[0], "1")
+
     @patch("group_member_backup.open_group.gui_thread_handles")
     def test_qt_search_focus_allows_missing_native_caret(self, gui_thread_handles):
         gui_thread_handles.return_value = (42, 42, 0)

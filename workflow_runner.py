@@ -26,7 +26,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Run selected visible Weixin backup tasks")
     result.add_argument("-t", "--tasks", default=",".join(TASKS))
     result.add_argument("-g", "--groups", default="", help="comma-separated group filters")
-    result.add_argument("-k", "--terms", default="a-z,1", help="group member search terms")
+    result.add_argument("-k", "--terms", default="1,a-z", help="group member search terms")
     result.add_argument("-M", "--member-mode", choices=("auto", "list", "detail"), default="auto")
     result.add_argument("-n", "--people-limit", type=int, default=1000)
     result.add_argument("-G", "--group-limit", type=int, default=1000)
