@@ -889,7 +889,7 @@ def save_contact_detail_pages(
         after_path.unlink(missing_ok=True)
         after, _ = crop_left_pane(after_full)
         changed = page_changed(before, after)
-        probe("scroll-after-profile", after_full, changed=changed, rows=len(rows))
+        probe("scroll-after-profile", after_full, changed=changed)
         if not changed:
             return outputs, "scrollbar_bottom"
     return outputs, "maximum_pages"
