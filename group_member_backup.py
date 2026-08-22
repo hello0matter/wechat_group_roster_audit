@@ -33,6 +33,17 @@ GROUP_RESULTS_CROP = (0.09, 0.10, 0.55, 0.93)
 GROUP_RESULTS_SCALE = 2
 
 
+def debug_step(directory: Path, name: str, image: Image.Image | None = None, **fields: object) -> None:
+    """Persist an opt-in group-member step probe for coordinate debugging."""
+    if not os.environ.get("WECHAT_DEBUG_GROUP_STEPS"):
+        return
+    directory.mkdir(parents=True, exist_ok=True)
+    if image is not None:
+        image.save(directory / f".debug-{name}.png")
+    with (directory / "debug-steps.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"step": name, **fields}, ensure_ascii=False) + "\n")
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="Capture visible members of the opened group")
     result.add_argument("-g", "--group", help="group name or unique visible fragment")
@@ -134,6 +145,7 @@ def replace_search_text(window: dict[str, object], value: str) -> None:
     time.sleep(0.15)
     if not member_search_visible(window):
         raise RuntimeError("group_member_search_not_visible")
+    debug_step(Path("artifacts/group-member-debug"), "search-focused", point=wx.point_in_window(window, GROUP_SEARCH_POINT), value=value)
     open_group.select_all()
     open_group.send_unicode_text(value)
     time.sleep(SEARCH_WAIT_SECONDS)
@@ -288,6 +300,7 @@ def prepare_group_member_search(
     directory.mkdir(parents=True, exist_ok=True)
     probe = directory / ".group-settings.png"
     image, _ = wx.capture_live_window(window, probe)
+    debug_step(directory, "settings-before-search", image, search_point=wx.point_in_window(window, GROUP_SEARCH_POINT))
     lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
     for attempt in range(3):
         if settings_visible(lines):
@@ -442,6 +455,7 @@ def backup_open_group(
         replace_search_text(window, term)
         probe = directory / ".member-mode-probe.png"
         image, _ = wx.capture_live_window(window, probe)
+        debug_step(directory, "after-input", image, term=term)
         lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
         rows = result_member_rows(image)
         if not rows:
@@ -462,6 +476,7 @@ def backup_open_group(
         if mode == "list":
             outputs.extend(save_list_pages(window, directory, term, maximum_pages))
         else:
+            debug_step(directory, "before-detail-clicks", image, term=term, rows=len(rows), mode=mode)
             outputs.extend(
                 save_detail_pages(
                     window,
