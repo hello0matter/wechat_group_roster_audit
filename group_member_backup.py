@@ -20,7 +20,7 @@ import wx
 
 
 DEFAULT_TERMS = ("1",) + tuple(string.ascii_lowercase)
-GROUP_SEARCH_POINT = (0.80, 0.15)
+GROUP_SEARCH_POINT = (0.80, 0.20)
 GROUP_RESULT_SCROLL_POINT = (0.79, 0.72)
 PROFILE_DISMISS_POINT = (0.50, 0.72)
 RESULT_PANEL = (0.60, 0.18, 0.98, 0.96)
@@ -132,9 +132,31 @@ def scroll_member_results(window: dict[str, object], *, upward: bool = False) ->
 def replace_search_text(window: dict[str, object], value: str) -> None:
     open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
     time.sleep(0.15)
+    if not member_search_visible(window):
+        raise RuntimeError("group_member_search_not_visible")
     open_group.select_all()
     open_group.send_unicode_text(value)
     time.sleep(SEARCH_WAIT_SECONDS)
+
+
+def member_search_visible(window: dict[str, object]) -> bool:
+    """Confirm the right-panel member search box is visible before typing."""
+    probe = Path("artifacts") / ".member-search-focus.png"
+    try:
+        image, _ = wx.capture_live_window(window, probe)
+        left = round(image.width * 0.70)
+        right = round(image.width * 0.97)
+        top = round(image.height * 0.14)
+        bottom = round(image.height * 0.27)
+        green = 0
+        for y in range(top, bottom, 2):
+            for x in range(left, right, 2):
+                red, blue_green, blue = image.getpixel((x, y))[:3]
+                if green := (red < 40 and 130 <= blue_green <= 230 and 60 <= blue <= 180):
+                    return True
+        return False
+    finally:
+        probe.unlink(missing_ok=True)
 
 
 def weixin_has_keyboard_focus(hwnd: int) -> bool:
@@ -285,7 +307,7 @@ def prepare_group_member_search(
     open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
     time.sleep(0.2)
     hwnd = int(window["hwnd"])
-    if not weixin_has_keyboard_focus(hwnd):
+    if not weixin_has_keyboard_focus(hwnd) or not member_search_visible(window):
         show_all = next(
             (
                 line
@@ -307,7 +329,7 @@ def prepare_group_member_search(
         time.sleep(SETTINGS_WAIT_SECONDS)
         open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
         time.sleep(0.2)
-        if not weixin_has_keyboard_focus(hwnd):
+        if not weixin_has_keyboard_focus(hwnd) or not member_search_visible(window):
             raise RuntimeError("group_member_search_not_focusable")
     probe.unlink(missing_ok=True)
     return window, image
