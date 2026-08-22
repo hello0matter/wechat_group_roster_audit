@@ -824,31 +824,59 @@ def save_contact_detail_pages(
     maximum: int | None,
     tesseract: Path,
 ) -> tuple[list[str], str]:
-    """Capture the expanded Contacts list page by page without opening rows.
-
-    Opening each contact is both slow and fragile: the detail panel can close or
-    return the list to its top after a click. The list itself is the useful
-    backup, so keep the viewport stable, save it, then scroll downward once.
-    """
+    """Open each visible contact, save its profile, then continue from the list."""
     outputs: list[str] = []
     limit = maximum or MAX_PAGES
-    previous_page: Image.Image | None = None
-    for index in range(limit):
-        frame = directory / f".contacts-page-{index + 1:02d}-frame.png"
+    seen_identifiers: set[str] = set()
+    for index in range(MAX_PAGES):
+        if len(outputs) >= limit:
+            return outputs, "maximum_contacts"
+        frame = directory / ".contacts-list.png"
         full_image, _ = capture_live_window(window, frame)
-        list_image, _ = crop_left_pane(full_image)
+        ocr_path = directory / ".contacts-list-ocr.png"
+        full_image.save(ocr_path)
+        try:
+            lines = open_group.run_ocr(tesseract, ocr_path, psm=11, language="chi_sim+eng")
+        finally:
+            ocr_path.unlink(missing_ok=True)
         frame.unlink(missing_ok=True)
-        if previous_page is not None and not page_changed(previous_page, list_image):
-            return outputs, "page_unchanged"
-        output = directory / f"page-{index + 1:02d}.png"
-        list_image.save(output)
-        outputs.append(str(output.resolve()))
-        if scrollbar_reached_bottom(list_image):
+        rows = _contact_rows(lines, full_image)
+        if not rows:
+            return outputs, "contacts_exhausted"
+        for row in rows:
+            point = screen_point_from_capture(
+                window,
+                full_image,
+                (row.left + row.right) // 2,
+                row.top + max(8, (row.bottom - row.top) // 3),
+            )
+            open_group.click_screen_point(point)
+            time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
+            candidate = directory / ".contact-candidate.png"
+            candidate_image, _ = capture_live_window(window, candidate)
+            candidate_lines = open_group.run_ocr(
+                tesseract, candidate, psm=11, language="chi_sim+eng"
+            )
+            identifier = contact_identifier(candidate_lines, candidate_image)
+            if identifier is not None and identifier not in seen_identifiers:
+                seen_identifiers.add(identifier)
+                output = directory / f"contact-{len(outputs) + 1:03d}.png"
+                candidate.replace(output)
+                outputs.append(str(output.resolve()))
+            else:
+                candidate.unlink(missing_ok=True)
+            open_group.press_escape()
+            time.sleep(0.18)
+            if len(outputs) >= limit:
+                return outputs, "maximum_contacts"
+        before, _ = crop_left_pane(full_image)
+        scroll_list(window)
+        after_path = directory / ".contacts-after.png"
+        after_full, _ = capture_live_window(window, after_path)
+        after_path.unlink(missing_ok=True)
+        after, _ = crop_left_pane(after_full)
+        if not page_changed(before, after):
             return outputs, "scrollbar_bottom"
-        previous_page = list_image.copy()
-        if index + 1 < limit:
-            scroll_list(window)
-            time.sleep(LIST_SCROLL_SETTLE_SECONDS)
     return outputs, "maximum_pages"
 
 

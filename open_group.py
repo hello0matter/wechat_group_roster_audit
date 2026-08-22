@@ -363,6 +363,12 @@ def select_all() -> None:
     win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
+def press_escape() -> None:
+    """Dismiss a contact detail pane without navigating the list."""
+    win32api.keybd_event(win32con.VK_ESCAPE, 0, 0, 0)
+    win32api.keybd_event(win32con.VK_ESCAPE, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+
 def send_unicode_text(value: str) -> None:
     code_units = value.encode("utf-16-le")
     inputs = []
