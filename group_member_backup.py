@@ -356,14 +356,16 @@ def save_detail_pages(
             page_path.unlink(missing_ok=True)
             break
         for row in rows:
-            # The avatar's upper third opens the profile card. The vertical
-            # center can hit the lower action area in newer Weixin builds.
-            click_y = row.top + max(8, (row.bottom - row.top) // 3)
+            # Click the nickname area just to the right of the avatar. Clicking
+            # the avatar itself can start a drag in newer Weixin builds, while
+            # the row center may hit the lower action area.
+            click_x = min(image.width - 48, row.right + 55)
+            click_y = row.top + max(8, min(18, (row.bottom - row.top) // 3))
             open_group.click_screen_point(
                 wx.screen_point_from_capture(
                     window,
                     image,
-                    (row.left + row.right) // 2,
+                    click_x,
                     click_y,
                 )
             )
