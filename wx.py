@@ -52,6 +52,9 @@ AUXILIARY_WINDOW_POLL_SECONDS = 0.1
 CONTACT_ROW_MIN_TOP = 90
 CONTACT_ROW_MAX_TOP_RATIO = 0.92
 CONTACT_ROW_MIN_GAP = 18
+# Stable point inside the lowest visible contact row. This intentionally does
+# not depend on OCR; the same point remains valid while the list scrolls.
+CONTACT_FIXED_CLICK_POINT = (0.23, 0.86)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -852,16 +855,9 @@ def save_contact_detail_pages(
         frame = directory / ".contacts-list.png"
         full_image, _ = capture_live_window(window, frame)
         frame.unlink(missing_ok=True)
-        # Avatar texture is enough to locate rows. Avoid OCR on the whole
-        # Contacts list; OCR is reserved for the profile page below.
-        rows = _contact_rows([], full_image)
-        if not rows:
-            return outputs, "contacts_exhausted"
-        row = rows[-1]
-        row_index = len(rows) - 1
-        click_x = (row.left + row.right) // 2
-        click_y = row.top + max(8, (row.bottom - row.top) // 3)
-        probe("list-before-click", full_image, row_index=row_index, row_top=row.top, click_x=click_x, click_y=click_y)
+        click_x = round(full_image.width * CONTACT_FIXED_CLICK_POINT[0])
+        click_y = round(full_image.height * CONTACT_FIXED_CLICK_POINT[1])
+        probe("fixed-bottom-click", full_image, click_x=click_x, click_y=click_y)
         open_group.click_screen_point(
             screen_point_from_capture(window, full_image, click_x, click_y)
         )
@@ -870,7 +866,7 @@ def save_contact_detail_pages(
         candidate_image, _ = capture_live_window(window, candidate)
         candidate_lines = open_group.run_ocr(tesseract, candidate, psm=11, language="chi_sim+eng")
         identifier = contact_identifier(candidate_lines, candidate_image)
-        probe("profile-after-click", candidate_image, identifier=identifier, row_index=row_index)
+        probe("profile-after-click", candidate_image, identifier=identifier)
         if identifier is not None and identifier not in seen_identifiers:
             seen_identifiers.add(identifier)
             output = directory / f"contact-{len(outputs) + 1:03d}.png"
@@ -880,6 +876,12 @@ def save_contact_detail_pages(
             candidate.unlink(missing_ok=True)
         if len(outputs) >= limit:
             return outputs, "maximum_contacts"
+        # The left list remains visible behind the profile. Clicking the same
+        # fixed bottom point returns to the list without navigating to its top.
+        open_group.click_screen_point(
+            screen_point_from_capture(window, candidate_image, click_x, click_y)
+        )
+        time.sleep(0.18)
         before, _ = crop_left_pane(full_image)
         scroll_list(window, -120)
         after_path = directory / ".contacts-after.png"
