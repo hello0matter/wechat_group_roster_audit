@@ -435,16 +435,14 @@ def click_result_and_verify_chat(
 
 
 def scroll_list(window: dict[str, object]) -> None:
-    open_group.set_cursor_pos(point_in_window(window, LIST_SCROLL_POINT))
-    win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, LIST_SCROLL_DELTA, 0)
+    open_group.scroll_screen_point(point_in_window(window, LIST_SCROLL_POINT), LIST_SCROLL_DELTA)
     time.sleep(LIST_SCROLL_SETTLE_SECONDS)
 
 
 def scroll_list_to_top(window: dict[str, object]) -> None:
     """Return the Contacts list to its first visible entry before a saved-group scan."""
-    open_group.set_cursor_pos(point_in_window(window, LIST_SCROLL_POINT))
     for _ in range(LIST_TOP_SCROLL_STEPS):
-        win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, LIST_TOP_SCROLL_DELTA, 0)
+        open_group.scroll_screen_point(point_in_window(window, LIST_SCROLL_POINT), LIST_TOP_SCROLL_DELTA)
         time.sleep(0.1)
     time.sleep(LIST_SCROLL_SETTLE_SECONDS)
 

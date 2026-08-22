@@ -258,6 +258,31 @@ def click_screen_point(point: tuple[int, int]) -> None:
     time.sleep(max(0.0, float(os.environ.get("WECHAT_CLICK_DELAY", "0.06"))))
 
 
+def scroll_screen_point(point: tuple[int, int], delta: int) -> None:
+    """Move to a list and send a modern wheel input event.
+
+    Newer Qt Weixin builds accept SendInput clicks but ignore the legacy
+    ``mouse_event`` wheel message. Keeping the move and wheel in one input
+    batch also prevents the pointer from briefly landing on a contact row.
+    """
+    x, y = map(int, point)
+    desktop = audit.virtual_desktop_rect()
+    width = max(1, desktop.right - desktop.left - 1)
+    height = max(1, desktop.bottom - desktop.top - 1)
+    absolute_move = MOUSEINPUT(
+        round((x - desktop.left) * 65535 / width),
+        round((y - desktop.top) * 65535 / height),
+        0,
+        0x0001 | 0x4000 | 0x8000,
+        0,
+        0,
+    )
+    wheel = MOUSEINPUT(0, 0, ctypes.c_ulong(int(delta)).value, 0x0800, 0, 0)
+    events = (INPUT * 2)(INPUT(type=0, mi=absolute_move), INPUT(type=0, mi=wheel))
+    if audit.USER32.SendInput(2, events, ctypes.sizeof(INPUT)) != 2:
+        raise ctypes.WinError()
+
+
 def send_trusted_keys(
     window: dict[str, object], key_positions: list[tuple[float, float]]
 ) -> None:
