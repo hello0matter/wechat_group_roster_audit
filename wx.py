@@ -435,8 +435,8 @@ def click_result_and_verify_chat(
     return metadata, False, CHAT_OPEN_ATTEMPTS, opened_path
 
 
-def scroll_list(window: dict[str, object]) -> None:
-    open_group.scroll_screen_point(point_in_window(window, LIST_SCROLL_POINT), LIST_SCROLL_DELTA)
+def scroll_list(window: dict[str, object], delta: int = LIST_SCROLL_DELTA) -> None:
+    open_group.scroll_screen_point(point_in_window(window, LIST_SCROLL_POINT), delta)
     time.sleep(LIST_SCROLL_SETTLE_SECONDS)
 
 
@@ -835,7 +835,6 @@ def save_contact_detail_pages(
     outputs: list[str] = []
     limit = maximum or MAX_PAGES
     seen_identifiers: set[str] = set()
-    row_cursor = 0
     probe_index = 0
 
     def probe(name: str, image: Image.Image, **fields: object) -> None:
@@ -852,32 +851,14 @@ def save_contact_detail_pages(
             return outputs, "maximum_contacts"
         frame = directory / ".contacts-list.png"
         full_image, _ = capture_live_window(window, frame)
-        ocr_path = directory / ".contacts-list-ocr.png"
-        full_image.save(ocr_path)
-        try:
-            lines = open_group.run_ocr(tesseract, ocr_path, psm=11, language="chi_sim+eng")
-        finally:
-            ocr_path.unlink(missing_ok=True)
         frame.unlink(missing_ok=True)
-        rows = _contact_rows(lines, full_image)
+        # Avatar texture is enough to locate rows. Avoid OCR on the whole
+        # Contacts list; OCR is reserved for the profile page below.
+        rows = _contact_rows([], full_image)
         if not rows:
             return outputs, "contacts_exhausted"
-        if row_cursor >= len(rows):
-            before, _ = crop_left_pane(full_image)
-            probe("scroll-before", full_image, rows=len(rows), row_cursor=row_cursor)
-            scroll_list(window)
-            after_path = directory / ".contacts-after.png"
-            after_full, _ = capture_live_window(window, after_path)
-            after_path.unlink(missing_ok=True)
-            after, _ = crop_left_pane(after_full)
-            probe("scroll-after", after_full, changed=page_changed(before, after))
-            if not page_changed(before, after):
-                return outputs, "scrollbar_bottom"
-            row_cursor = 0
-            continue
-        row = rows[row_cursor]
-        row_index = row_cursor
-        row_cursor += 1
+        row = rows[-1]
+        row_index = len(rows) - 1
         click_x = (row.left + row.right) // 2
         click_y = row.top + max(8, (row.bottom - row.top) // 3)
         probe("list-before-click", full_image, row_index=row_index, row_top=row.top, click_x=click_x, click_y=click_y)
@@ -897,11 +878,18 @@ def save_contact_detail_pages(
             outputs.append(str(output.resolve()))
         else:
             candidate.unlink(missing_ok=True)
-        open_group.click_screen_point(sidebar_point(window, CONTACTS_NAV))
-        time.sleep(NAVIGATION_WAIT_SECONDS)
         if len(outputs) >= limit:
             return outputs, "maximum_contacts"
-        continue
+        before, _ = crop_left_pane(full_image)
+        scroll_list(window, -120)
+        after_path = directory / ".contacts-after.png"
+        after_full, _ = capture_live_window(window, after_path)
+        after_path.unlink(missing_ok=True)
+        after, _ = crop_left_pane(after_full)
+        changed = page_changed(before, after)
+        probe("scroll-after-profile", after_full, changed=changed, rows=len(rows))
+        if not changed:
+            return outputs, "scrollbar_bottom"
     return outputs, "maximum_pages"
 
 
