@@ -29,6 +29,10 @@ SEARCH_WAIT_SECONDS = 0.65
 PROFILE_WAIT_SECONDS = 0.55
 PROFILE_DISMISS_WAIT_SECONDS = 0.65
 SCROLL_WAIT_SECONDS = 0.15
+MEMBER_RESET_WAIT_SECONDS = 0.35
+MEMBER_RESET_MAX_STEPS = 12
+MEMBER_RESET_STABLE_FRAMES = 2
+MEMBER_RESET_MIN_WHEELS = 3
 MAX_PAGES = 1000
 GROUP_RESULTS_CROP = (0.09, 0.10, 0.55, 0.93)
 GROUP_RESULTS_SCALE = 2
@@ -58,6 +62,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("-o", type=Path, default=Path("artifacts/group-members"))
     result.add_argument("-p", type=int, help="explicit Weixin PID")
     result.add_argument("--tesseract", type=Path)
+    result.add_argument("--term-timeout", type=float, help="maximum seconds for one member search term")
     return result
 
 
@@ -173,6 +178,66 @@ def scroll_member_results(
         0,
     )
     time.sleep(wait_seconds("WECHAT_SCROLL_DELAY", SCROLL_WAIT_SECONDS))
+
+
+class MemberTermTimeout(RuntimeError):
+    def __init__(self, term: str, stage: str) -> None:
+        super().__init__(f"member_term_timeout:{term}:{stage}")
+        self.term = term
+        self.stage = stage
+
+
+def ensure_term_time(deadline: float, term: str, stage: str) -> None:
+    if wx.stop_requested():
+        raise RuntimeError("stop_requested")
+    if time.monotonic() >= deadline:
+        raise MemberTermTimeout(term, stage)
+
+
+def reset_member_results_to_top(
+    window: dict[str, object], directory: Path, term: str, deadline: float
+) -> bool:
+    """Overscroll upward and require stable frames before the next search."""
+    label = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-") or "term"
+    probe_dir = directory / "reset"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    previous: Image.Image | None = None
+    stable = 0
+    keep_probes = bool(os.environ.get("WECHAT_DEBUG_GROUP_STEPS"))
+    max_steps = max(1, int(wait_seconds("WECHAT_MEMBER_RESET_MAX_STEPS", MEMBER_RESET_MAX_STEPS)))
+    stable_frames = max(1, int(wait_seconds("WECHAT_MEMBER_RESET_STABLE_FRAMES", MEMBER_RESET_STABLE_FRAMES)))
+    min_wheels = max(1, int(wait_seconds("WECHAT_MEMBER_RESET_MIN_WHEELS", MEMBER_RESET_MIN_WHEELS)))
+    for step in range(1, max_steps + 1):
+        ensure_term_time(deadline, term, f"reset-before-{step}")
+        before_path = probe_dir / f"{label}-before-{step:02d}.png"
+        before, _ = wx.capture_live_window(window, before_path)
+        if not keep_probes:
+            before_path.unlink(missing_ok=True)
+        if previous is not None and not result_page_changed(crop_result_panel(previous), crop_result_panel(before)):
+            stable += 1
+        else:
+            stable = 0
+        debug_step(directory, "term-reset-before", before, term=term, step=step, stable=stable)
+        previous = before
+        if stable >= stable_frames and step >= min_wheels:
+            debug_step(directory, "term-reset-top", term=term, ok=True, step=step, stable=stable)
+            return True
+        ensure_term_time(deadline, term, f"reset-wheel-{step}")
+        scroll_member_results(window, upward=True, delta=12000)
+        time.sleep(wait_seconds("WECHAT_MEMBER_RESET_DELAY", MEMBER_RESET_WAIT_SECONDS))
+        after_path = probe_dir / f"{label}-after-{step:02d}.png"
+        after, _ = wx.capture_live_window(window, after_path)
+        if not keep_probes:
+            after_path.unlink(missing_ok=True)
+        changed = result_page_changed(crop_result_panel(before), crop_result_panel(after))
+        debug_step(directory, "term-reset-after", after, term=term, step=step, changed=changed)
+        stable = stable + 1 if not changed else 0
+        previous = after
+        if stable >= stable_frames and step >= min_wheels:
+            debug_step(directory, "term-reset-top", term=term, ok=True, step=step, stable=stable)
+            return True
+    debug_step(directory, "term-reset-top", term=term, ok=False, stable=stable, min_wheels=min_wheels)
+    return False
 
 
 def replace_search_text(window: dict[str, object], value: str) -> None:
@@ -470,14 +535,17 @@ def save_list_pages(
     directory: Path,
     term: str,
     maximum: int,
+    deadline: float,
 ) -> list[str]:
     outputs: list[str] = []
     label = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-") or "term"
     for index in range(maximum):
-        if wx.stop_requested() or wx.consume_skip_request():
+        ensure_term_time(deadline, term, f"list-before-{index + 1}")
+        if wx.consume_skip_request():
             break
         path = directory / f"members-{label}-{index + 1:03d}.png"
         image, _ = wx.capture_live_window(window, path)
+        ensure_term_time(deadline, term, f"list-after-capture-{index + 1}")
         rows = result_member_rows(image)
         if not rows:
             path.unlink(missing_ok=True)
@@ -486,6 +554,7 @@ def save_list_pages(
         if wx.stop_requested():
             break
         before = crop_result_panel(image)
+        ensure_term_time(deadline, term, f"list-before-scroll-{index + 1}")
         scroll_member_results(window)
         if wx.stop_requested():
             break
@@ -506,10 +575,12 @@ def save_detail_pages(
     maximum: int,
     tesseract: Path,
     seen_identifiers: set[str],
+    deadline: float,
 ) -> list[str]:
     outputs: list[str] = []
     for step in range(maximum):
-        if wx.stop_requested() or wx.consume_skip_request():
+        ensure_term_time(deadline, term, f"detail-before-{step + 1}")
+        if wx.consume_skip_request():
             break
         # Only use the bottom-most currently visible row. A single missed OCR
         # row can otherwise make an indexed loop jump from A to C; bottom-anchor
@@ -535,6 +606,7 @@ def save_detail_pages(
         open_group.click_screen_point(
             wx.screen_point_from_capture(window, current_image, click_x, click_y)
         )
+        ensure_term_time(deadline, term, f"detail-after-click-{step + 1}")
         time.sleep(wait_seconds("WECHAT_PROFILE_DELAY", PROFILE_WAIT_SECONDS))
         candidate = directory / ".member-profile.png"
         candidate_image, _ = wx.capture_live_window(window, candidate)
@@ -574,6 +646,7 @@ def backup_open_group(
     member_mode: str,
     maximum_pages: int,
     tesseract: Path,
+    term_timeout: float | None = None,
 ) -> dict[str, object]:
     """Backup one opened group's visible member search results."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -586,61 +659,64 @@ def backup_open_group(
     exposed_identifiers: set[str] = set()
     selected_mode = member_mode
     decisions: dict[str, str] = {}
+    timeout_seconds = term_timeout if term_timeout is not None else wait_seconds("WECHAT_MEMBER_TERM_TIMEOUT", 60.0)
     for term in terms:
         if wx.consume_skip_request():
             continue
-        for _ in range(3):
-            scroll_member_results(window, upward=True)
-        replace_search_text(window, term)
-        probe = directory / ".member-mode-probe.png"
-        image, _ = wx.capture_live_window(window, probe)
-        debug_step(directory, "after-input", image, term=term)
-        lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
-        rows = result_member_rows(image)
-        if not rows:
-            label = (
-                re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-")
-                or "term"
-            )
-            empty_path = directory / f"members-{label}-empty.png"
-            probe.replace(empty_path)
-            outputs.append(str(empty_path.resolve()))
-            decisions[term] = "empty"
-            continue
-        mode = selected_mode
-        exposed_ids = visible_identifiers(lines, image)
-        if list_ids_enabled() and not exposed_ids:
-            exposed_ids = visible_identifiers_from_panel(tesseract, image, probe)
-        exposed_identifiers.update(exposed_ids)
-        # The global safety switch takes precedence over a stale `-M detail`
-        # argument: opening cards is unnecessary and risks collapsing the pane
-        # when IDs are already exposed in the result list. Disable the switch
-        # explicitly to opt into detail clicks.
-        if list_ids_enabled():
-            # Screenshot-only is a hard safety guarantee. OCR is used for
-            # optional filtering, never to decide whether a member may be
-            # clicked when this switch is enabled.
-            mode = "list"
-        elif mode == "auto":
-            mode = "detail"
-        decisions[term] = mode
-        probe.unlink(missing_ok=True)
-        if mode == "list":
-            if wx.consume_skip_request():
+        deadline = time.monotonic() + max(1.0, timeout_seconds)
+        try:
+            if not reset_member_results_to_top(window, directory, term, deadline):
+                raise MemberTermTimeout(term, "reset-top-not-confirmed")
+            replace_search_text(window, term)
+            ensure_term_time(deadline, term, "after-input")
+            probe = directory / ".member-mode-probe.png"
+            image, _ = wx.capture_live_window(window, probe)
+            ensure_term_time(deadline, term, "after-capture")
+            debug_step(directory, "after-input", image, term=term)
+            lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+            rows = result_member_rows(image)
+            if not rows:
+                label = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-") or "term"
+                empty_path = directory / f"members-{label}-empty.png"
+                probe.replace(empty_path)
+                outputs.append(str(empty_path.resolve()))
+                decisions[term] = "empty"
+                debug_step(directory, "term-finished", term=term, reason="empty", pages=0)
                 continue
-            outputs.extend(save_list_pages(window, directory, term, maximum_pages))
-        else:
-            debug_step(directory, "before-detail-clicks", image, term=term, rows=len(rows), mode=mode)
-            outputs.extend(
-                save_detail_pages(
-                    window,
-                    directory,
-                    term,
-                    maximum_pages,
-                    tesseract,
-                    seen_identifiers,
-                )
-            )
+            mode = selected_mode
+            exposed_ids = visible_identifiers(lines, image)
+            if list_ids_enabled() and not exposed_ids:
+                exposed_ids = visible_identifiers_from_panel(tesseract, image, probe)
+            exposed_identifiers.update(exposed_ids)
+            if list_ids_enabled():
+                mode = "list"
+            elif mode == "auto":
+                mode = "detail"
+            decisions[term] = mode
+            probe.unlink(missing_ok=True)
+            if mode == "list":
+                if wx.consume_skip_request():
+                    continue
+                outputs.extend(save_list_pages(window, directory, term, maximum_pages, deadline))
+            else:
+                debug_step(directory, "before-detail-clicks", image, term=term, rows=len(rows), mode=mode)
+                outputs.extend(save_detail_pages(window, directory, term, maximum_pages, tesseract, seen_identifiers, deadline))
+            ensure_term_time(deadline, term, "term-finished")
+            debug_step(directory, "term-finished", term=term, reason="completed", pages=len(outputs))
+        except MemberTermTimeout as error:
+            decisions[term] = "timeout"
+            debug_step(directory, "term-timeout", term=term, stage=error.stage, pages=len(outputs))
+            return {
+                "ok": False,
+                "reason": "member_term_timeout",
+                "term": term,
+                "stage": error.stage,
+                "member_mode": member_mode,
+                "terms": list(terms),
+                "decisions": decisions,
+                "pages": outputs,
+                "identifiers": sorted(seen_identifiers | exposed_identifiers),
+            }
     return {
         "ok": bool(outputs),
         "member_mode": member_mode,
@@ -682,7 +758,7 @@ def main() -> int:
         if args.group:
             window = open_named_group(window, args.group, args.o, tesseract)
         result = backup_open_group(
-            window, args.o, terms, args.member_mode, args.s, tesseract
+            window, args.o, terms, args.member_mode, args.s, tesseract, args.term_timeout
         )
     except RuntimeError as error:
         result = {"ok": False, "reason": str(error), "pages": []}

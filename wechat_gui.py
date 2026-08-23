@@ -131,6 +131,7 @@ class App(tk.Tk):
         self.people_limit = tk.IntVar(value=int(self.config_data.get("people_limit", 1000)))
         self.group_limit = tk.IntVar(value=int(self.config_data.get("group_limit", 1000)))
         self.member_pages = tk.IntVar(value=int(self.config_data.get("member_pages", 1000)))
+        self.member_term_timeout = tk.DoubleVar(value=float(self.config_data.get("member_term_timeout", 60.0)))
         self.click_delay = tk.DoubleVar(value=float(self.config_data.get("click_delay", 0.06)))
         self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.15)))
         self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))
@@ -235,6 +236,7 @@ class App(tk.Tk):
             "people_limit": self.people_limit.get(),
             "group_limit": self.group_limit.get(),
             "member_pages": self.member_pages.get(),
+            "member_term_timeout": self.member_term_timeout.get(),
             "click_delay": self.click_delay.get(),
             "scroll_delay": self.scroll_delay.get(),
             "profile_delay": self.profile_delay.get(),
@@ -259,31 +261,34 @@ class App(tk.Tk):
         dialog.grab_set()
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill="both", expand=True)
-        rows = (('点击后延迟（秒）', self.click_delay), ('滚动后等待（秒）', self.scroll_delay), ('打开会话后等待（秒）', self.chat_open_delay), ('打开资料卡后延迟（秒）', self.profile_delay), ('返回/导航等待（秒）', self.navigation_delay), ('设置面板等待（秒）', self.settings_delay))
-        scroll_label = '最近会话滚动量'
-        rows = (*rows, (scroll_label, self.recent_scroll_delta))
+        rows = (("\u70b9\u51fb\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.click_delay), ("\u6eda\u52a8\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.scroll_delay), ("\u6253\u5f00\u4f1a\u8bdd\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.chat_open_delay), ("\u6253\u5f00\u8d44\u6599\u5361\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.profile_delay), ("\u8fd4\u56de/\u5bfc\u822a\u7b49\u5f85\uff08\u79d2\uff09", self.navigation_delay), ("\u8bbe\u7f6e\u9762\u677f\u7b49\u5f85\uff08\u79d2\uff09", self.settings_delay), ("\u6700\u8fd1\u4f1a\u8bdd\u6eda\u52a8\u91cf", self.recent_scroll_delta), ("\u5355\u4e2a\u641c\u7d22\u8bcd\u8d85\u65f6\uff08\u79d2\uff09", self.member_term_timeout))
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
-        ttk.Label(body, text="群策略").grid(row=7, column=0, sticky="w", pady=4)
-        ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=7, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="自动 / 只截图 / 打开详情").grid(row=7, column=2, sticky="w")
-        ttk.Checkbutton(body, text="群成员只截图（禁止点击资料卡）", variable=self.list_if_id).grid(row=8, column=0, columnspan=3, sticky="w", pady=4)
-        limits = (("联系人上限", self.people_limit, 100000), ("群上限", self.group_limit, 100000), ("每个搜索词页数", self.member_pages, 1000))
-        for row, (label, variable, maximum) in enumerate(limits, 9):
+        strategy_row = len(rows)
+        ttk.Label(body, text="\u7fa4\u7b56\u7565").grid(row=strategy_row, column=0, sticky="w", pady=4)
+        ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=strategy_row, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="\u81ea\u52a8 / \u53ea\u622a\u56fe / \u6253\u5f00\u8be6\u60c5").grid(row=strategy_row, column=2, sticky="w")
+        ttk.Checkbutton(body, text="\u7fa4\u6210\u5458\u53ea\u622a\u56fe\uff08\u7981\u6b62\u70b9\u51fb\u8d44\u6599\u5361\uff09", variable=self.list_if_id).grid(row=strategy_row + 1, column=0, columnspan=3, sticky="w", pady=4)
+        limits = (("\u8054\u7cfb\u4eba\u4e0a\u9650", self.people_limit, 100000), ("\u7fa4\u4e0a\u9650", self.group_limit, 100000), ("\u6bcf\u4e2a\u641c\u7d22\u8bcd\u9875\u6570", self.member_pages, 1000))
+        limits_start = strategy_row + 2
+        for row, (label, variable, maximum) in enumerate(limits, limits_start):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Spinbox(body, from_=1, to=maximum, textvariable=variable, width=12).grid(row=row, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="群成员失败策略").grid(row=12, column=0, sticky="w", pady=4)
-        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=12, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=12, column=2, sticky="w")
-        ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=13, column=0, columnspan=3, sticky="w", pady=4)
-        ttk.Checkbutton(body, text="开始后最小化工具窗口", variable=self.minimize_after_start).grid(row=14, column=0, columnspan=3, sticky="w", pady=4)
-        hotkeys = (("启动快捷键", self.hotkey_start), ("暂停快捷键", self.hotkey_pause), ("停止快捷键", self.hotkey_stop))
-        for row, (label, variable) in enumerate(hotkeys, 15):
+        policy_row = limits_start + len(limits)
+        ttk.Label(body, text="\u7fa4\u6210\u5458\u5931\u8d25\u7b56\u7565").grid(row=policy_row, column=0, sticky="w", pady=4)
+        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=policy_row, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="\u8df3\u8fc7\u8be5\u7fa4\u7ee7\u7eed / \u9047\u9519\u505c\u6b62").grid(row=policy_row, column=2, sticky="w")
+        fold_row = policy_row + 1
+        ttk.Checkbutton(body, text="\u5904\u7406\u6298\u53e0\u7684\u804a\u5929\uff08\u5176\u4e2d\u901a\u5e38\u662f\u7fa4\uff09", variable=self.task_folded_groups).grid(row=fold_row, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="\u5f00\u59cb\u540e\u6700\u5c0f\u5316\u5de5\u5177\u7a97\u53e3", variable=self.minimize_after_start).grid(row=fold_row + 1, column=0, columnspan=3, sticky="w", pady=4)
+        hotkeys = (("\u542f\u52a8\u5feb\u6377\u952e", self.hotkey_start), ("\u6682\u505c\u5feb\u6377\u952e", self.hotkey_pause), ("\u505c\u6b62\u5feb\u6377\u952e", self.hotkey_stop))
+        hotkey_start = fold_row + 2
+        for row, (label, variable) in enumerate(hotkeys, hotkey_start):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=18).grid(row=row, column=1, padx=10, pady=4)
         buttons = ttk.Frame(body)
-        buttons.grid(row=19, column=0, columnspan=3, pady=(12, 0), sticky="e")
+        buttons.grid(row=hotkey_start + len(hotkeys) + 1, column=0, columnspan=3, pady=(12, 0), sticky="e")
         ttk.Button(buttons, text="保存并关闭", command=lambda: (self.save_config(), self._restart_hotkeys(), dialog.destroy())).pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
 
@@ -569,6 +574,7 @@ class App(tk.Tk):
             "WECHAT_NAVIGATION_DELAY": str(self.navigation_delay.get()),
             "WECHAT_SETTINGS_DELAY": str(self.settings_delay.get()),
             "WECHAT_RECENT_SCROLL_DELTA": str(self.recent_scroll_delta.get()),
+            "WECHAT_MEMBER_TERM_TIMEOUT": str(self.member_term_timeout.get()),
             "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
             "WECHAT_FOLDED_GROUPS": "1" if self.task_folded_groups.get() else "0",
