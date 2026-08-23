@@ -161,13 +161,15 @@ def result_page_changed(previous: Image.Image, current: Image.Image) -> bool:
     return difference >= wx.UNCHANGED_PAGE_MEAN_DIFFERENCE
 
 
-def scroll_member_results(window: dict[str, object], *, upward: bool = False) -> None:
+def scroll_member_results(
+    window: dict[str, object], *, upward: bool = False, delta: int = 12000
+) -> None:
     open_group.set_cursor_pos(wx.point_in_window(window, GROUP_RESULT_SCROLL_POINT))
     win32api.mouse_event(
         win32con.MOUSEEVENTF_WHEEL,
         0,
         0,
-        12000 if upward else -12000,
+        abs(delta) if upward else -abs(delta),
         0,
     )
     time.sleep(wait_seconds("WECHAT_SCROLL_DELAY", SCROLL_WAIT_SECONDS))
@@ -475,70 +477,59 @@ def save_detail_pages(
     seen_identifiers: set[str],
 ) -> list[str]:
     outputs: list[str] = []
-    for _page in range(maximum):
-        page_path = directory / ".member-results.png"
-        image, _ = wx.capture_live_window(window, page_path)
-        rows = result_member_rows(image)
-        if not rows:
+    for step in range(maximum):
+        # Only use the bottom-most currently visible row. A single missed OCR
+        # row can otherwise make an indexed loop jump from A to C; bottom-anchor
+        # traversal may revisit a member, but it cannot skip past one.
+        page_path = directory / ".member-results-current.png"
+        current_image, _ = wx.capture_live_window(window, page_path)
+        current_rows = result_member_rows(current_image)
+        if not current_rows:
             page_path.unlink(missing_ok=True)
             break
-        row_index = 0
-        while row_index < len(rows):
-            # Re-capture before every click. A profile card can resize the
-            # settings pane, making coordinates from the previous frame stale.
-            current_path = directory / ".member-results-current.png"
-            current_image, _ = wx.capture_live_window(window, current_path)
-            current_rows = result_member_rows(current_image)
-            if row_index >= len(current_rows):
-                current_path.unlink(missing_ok=True)
-                raise RuntimeError("group_member_rows_disappeared")
-            row = current_rows[row_index]
-            # Click the nickname area just to the right of the avatar. Clicking
-            # the avatar itself can start a drag in newer Weixin builds, while
-            # the row center may hit the lower action area.
-            click_x = min(current_image.width - 48, row.right + 55)
-            click_y = row.top + max(8, min(18, (row.bottom - row.top) // 3))
-            debug_step(
-                directory,
-                f"before-detail-click-{row_index + 1:04d}",
-                current_image,
-                ordinal=row_index + 1,
-                point=wx.screen_point_from_capture(window, current_image, click_x, click_y),
-                row=(row.left, row.top, row.right, row.bottom),
-            )
-            open_group.click_screen_point(
-                wx.screen_point_from_capture(
-                    window,
-                    current_image,
-                    click_x,
-                    click_y,
-                )
-            )
-            time.sleep(wait_seconds("WECHAT_PROFILE_DELAY", PROFILE_WAIT_SECONDS))
-            candidate = directory / ".member-profile.png"
-            candidate_image, _ = wx.capture_live_window(window, candidate)
-            lines = open_group.run_ocr(
-                tesseract, candidate, psm=11, language="chi_sim+eng"
-            )
-            identifier = wx.contact_identifier(lines, candidate_image)
-            if identifier is not None and identifier not in seen_identifiers:
-                seen_identifiers.add(identifier)
-                output = directory / f"member-{len(seen_identifiers):05d}.png"
-                candidate.replace(output)
-                outputs.append(str(output.resolve()))
-            else:
-                candidate.unlink(missing_ok=True)
-            current_path.unlink(missing_ok=True)
-            if not close_member_profile(window, directory, row_index + 1):
-                raise RuntimeError("group_member_panel_not_recovered")
-            row_index += 1
-        before = crop_result_panel(image)
+        row = current_rows[-1]
+        click_x = min(current_image.width - 48, row.right + 55)
+        click_y = row.top + max(8, min(18, (row.bottom - row.top) // 3))
+        debug_step(
+            directory,
+            f"before-detail-click-{step + 1:04d}",
+            current_image,
+            ordinal=step + 1,
+            point=wx.screen_point_from_capture(window, current_image, click_x, click_y),
+            row=(row.left, row.top, row.right, row.bottom),
+            strategy="bottom_anchor",
+        )
+        open_group.click_screen_point(
+            wx.screen_point_from_capture(window, current_image, click_x, click_y)
+        )
+        time.sleep(wait_seconds("WECHAT_PROFILE_DELAY", PROFILE_WAIT_SECONDS))
+        candidate = directory / ".member-profile.png"
+        candidate_image, _ = wx.capture_live_window(window, candidate)
+        lines = open_group.run_ocr(tesseract, candidate, psm=11, language="chi_sim+eng")
+        identifier = wx.contact_identifier(lines, candidate_image)
+        if identifier is not None and identifier not in seen_identifiers:
+            seen_identifiers.add(identifier)
+            output = directory / f"member-{len(seen_identifiers):05d}.png"
+            candidate.replace(output)
+            outputs.append(str(output.resolve()))
+        else:
+            candidate.unlink(missing_ok=True)
         page_path.unlink(missing_ok=True)
-        scroll_member_results(window)
-        after_path = directory / ".members-after.png"
+        if not close_member_profile(window, directory, step + 1):
+            raise RuntimeError("group_member_panel_not_recovered")
+
+        before_path = directory / ".members-before-step-scroll.png"
+        before_image, _ = wx.capture_live_window(window, before_path)
+        scroll_member_results(window, delta=600)
+        time.sleep(wait_seconds("WECHAT_DETAIL_SCROLL_DELAY", SCROLL_WAIT_SECONDS))
+        after_path = directory / ".members-after-step.png"
         after_image, _ = wx.capture_live_window(window, after_path)
+        changed = result_page_changed(
+            crop_result_panel(before_image), crop_result_panel(after_image)
+        )
+        before_path.unlink(missing_ok=True)
         after_path.unlink(missing_ok=True)
-        if not result_page_changed(before, crop_result_panel(after_image)):
+        if not changed:
             break
     return outputs
 
