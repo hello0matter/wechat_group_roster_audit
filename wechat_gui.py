@@ -673,7 +673,7 @@ class App(tk.Tk):
                         self.pause_file.unlink(missing_ok=True)
                         self.run_selected()
                     else:
-                        self.log_text("??????????????????????")
+                        self.log_text("任务正在运行，启动快捷键不会创建第二个任务。")
                 elif kind == "hotkey_pause":
                     self.toggle_pause()
                 elif kind == "hotkey_stop":

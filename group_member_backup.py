@@ -33,6 +33,7 @@ MEMBER_RESET_WAIT_SECONDS = 0.35
 MEMBER_RESET_MAX_STEPS = 12
 MEMBER_RESET_STABLE_FRAMES = 2
 MEMBER_RESET_MIN_WHEELS = 3
+MEMBER_RESET_DELTA = 120000
 MAX_PAGES = 1000
 GROUP_RESULTS_CROP = (0.09, 0.10, 0.55, 0.93)
 GROUP_RESULTS_SCALE = 2
@@ -223,47 +224,12 @@ def ensure_term_time(clock: TermClock, term: str, stage: str) -> None:
 def reset_member_results_to_top(
     window: dict[str, object], directory: Path, term: str, deadline: TermClock
 ) -> bool:
-    """Overscroll upward and require stable frames before the next search."""
-    label = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-") or "term"
-    probe_dir = directory / "reset"
-    probe_dir.mkdir(parents=True, exist_ok=True)
-    previous: Image.Image | None = None
-    stable = 0
-    keep_probes = bool(os.environ.get("WECHAT_DEBUG_GROUP_STEPS"))
-    max_steps = max(1, int(wait_seconds("WECHAT_MEMBER_RESET_MAX_STEPS", MEMBER_RESET_MAX_STEPS)))
-    stable_frames = max(1, int(wait_seconds("WECHAT_MEMBER_RESET_STABLE_FRAMES", MEMBER_RESET_STABLE_FRAMES)))
-    min_wheels = max(1, int(wait_seconds("WECHAT_MEMBER_RESET_MIN_WHEELS", MEMBER_RESET_MIN_WHEELS)))
-    for step in range(1, max_steps + 1):
-        ensure_term_time(deadline, term, f"reset-before-{step}")
-        before_path = probe_dir / f"{label}-before-{step:02d}.png"
-        before, _ = wx.capture_live_window(window, before_path)
-        if not keep_probes:
-            before_path.unlink(missing_ok=True)
-        if previous is not None and not result_page_changed(crop_result_panel(previous), crop_result_panel(before)):
-            stable += 1
-        else:
-            stable = 0
-        debug_step(directory, "term-reset-before", before, term=term, step=step, stable=stable)
-        previous = before
-        if stable >= stable_frames and step >= min_wheels:
-            debug_step(directory, "term-reset-top", term=term, ok=True, step=step, stable=stable)
-            return True
-        ensure_term_time(deadline, term, f"reset-wheel-{step}")
-        scroll_member_results(window, upward=True, delta=wx.member_scroll_delta())
-        time.sleep(wait_seconds("WECHAT_MEMBER_RESET_DELAY", MEMBER_RESET_WAIT_SECONDS))
-        after_path = probe_dir / f"{label}-after-{step:02d}.png"
-        after, _ = wx.capture_live_window(window, after_path)
-        if not keep_probes:
-            after_path.unlink(missing_ok=True)
-        changed = result_page_changed(crop_result_panel(before), crop_result_panel(after))
-        debug_step(directory, "term-reset-after", after, term=term, step=step, changed=changed)
-        stable = stable + 1 if not changed else 0
-        previous = after
-        if stable >= stable_frames and step >= min_wheels:
-            debug_step(directory, "term-reset-top", term=term, ok=True, step=step, stable=stable)
-            return True
-    debug_step(directory, "term-reset-top", term=term, ok=False, stable=stable, min_wheels=min_wheels)
-    return False
+    """Use one fixed large upward wheel before each search term."""
+    ensure_term_time(deadline, term, "reset-before")
+    scroll_member_results(window, upward=True, delta=MEMBER_RESET_DELTA)
+    time.sleep(wait_seconds("WECHAT_MEMBER_RESET_DELAY", MEMBER_RESET_WAIT_SECONDS))
+    debug_step(directory, "term-reset-top", term=term, ok=True, delta=MEMBER_RESET_DELTA)
+    return True
 
 
 def replace_search_text(window: dict[str, object], value: str) -> None:
