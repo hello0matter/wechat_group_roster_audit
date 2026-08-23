@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from PIL import Image
+from PIL import ImageStat
 
 import group_member_backup
 import open_group
@@ -35,6 +36,12 @@ def matches_group_keywords(title: str | None, keywords: tuple[str, ...]) -> bool
         return False
     normalized = open_group.normalize_text(title)
     return any(open_group.normalize_text(keyword) in normalized for keyword in keywords)
+
+
+def chat_surface_ready(image: Image.Image) -> bool:
+    """Reject the blank right pane shown while a folded row is still opening."""
+    crop = image.crop((round(image.width * 0.43), round(image.height * 0.12), image.width, image.height))
+    return sum(ImageStat.Stat(crop.convert("RGB")).stddev) > 180
 
 
 def safe_group_directory(base: Path, index: int, title: str | None) -> Path:
@@ -199,11 +206,18 @@ def save_recent_mixed(
                 wx.screen_point_from_capture(
                     window,
                     list_image,
-                    (row.left + row.right) // 2,
+                    round(list_image.width * (0.18 if start_current_list else 0.135)),
                     (row.top + row.bottom) // 2,
                 )
             )
             time.sleep(wx.CHAT_OPEN_WAIT_SECONDS)
+            opened_probe = directory / ".recent-opened-probe.png"
+            opened_image, _ = wx.capture_live_window(window, opened_probe)
+            if start_current_list and not chat_surface_ready(opened_image):
+                opened_probe.unlink(missing_ok=True)
+                return_to_list()
+                continue
+            opened_probe.unlink(missing_ok=True)
             open_group.click_screen_point(
                 (int(window["left"]) + int(window["width"]) - 62, int(window["top"]) + 84)
             )
