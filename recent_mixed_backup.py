@@ -201,6 +201,10 @@ def save_audit_event(directory: Path, event: dict[str, object]) -> None:
     """Record the image-to-click binding used for one automation decision."""
     audit_dir = directory / "audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
+    event = dict(event)
+    input_log = os.environ.get("WECHAT_INPUT_LOG")
+    if input_log:
+        event.setdefault("input_log", input_log)
     with (audit_dir / "events.jsonl").open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
 
@@ -735,10 +739,39 @@ def save_recent_mixed(
         returned_image, _ = wx.capture_live_window(window, returned_path)
         save_audit_frame(directory, page_index + 1, "after-return", returned_image)
         returned_path.unlink(missing_ok=True)
-        wx.scroll_list(window, delta=wx.recent_scroll_delta())
+        scroll_before_path = directory / ".recent-mixed-before-scroll.png"
+        scroll_before, _ = wx.capture_live_window(window, scroll_before_path)
+        save_audit_frame(directory, page_index + 1, "before-scroll", scroll_before)
+        scroll_point = wx.point_in_window(window, wx.LIST_SCROLL_POINT)
+        scroll_delta = wx.recent_scroll_delta()
+        save_audit_event(
+            directory,
+            {
+                "step": page_index + 1,
+                "stage": "scroll",
+                "scope": "folded" if start_current_list else "recent",
+                "before_image": "before-scroll",
+                "scroll_screen": scroll_point,
+                "delta": scroll_delta,
+            },
+        )
+        wx.scroll_list(window, delta=scroll_delta)
+        scroll_before_path.unlink(missing_ok=True)
         after_path = directory / ".recent-mixed-after.png"
         after_full, _ = wx.capture_live_window(window, after_path)
         save_audit_frame(directory, page_index + 1, "after-scroll", after_full)
+        save_audit_event(
+            directory,
+            {
+                "step": page_index + 1,
+                "stage": "after-scroll",
+                "scope": "folded" if start_current_list else "recent",
+                "after_image": "after-scroll",
+                "scroll_screen": scroll_point,
+                "delta": scroll_delta,
+                "image_size": after_full.size,
+            },
+        )
         after_path.unlink(missing_ok=True)
         after, _ = wx.crop_left_pane(after_full)
         if not wx.page_changed(before, after):

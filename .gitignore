@@ -10,3 +10,4 @@ wechat_backup_runner.spec
 gui_config.json
 group_nicknames.csv
 panel_config.json
+hotkey_status.json

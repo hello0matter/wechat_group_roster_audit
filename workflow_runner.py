@@ -145,6 +145,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("group tasks require at least one member search term")
     if min(args.people_limit, args.group_limit, args.member_pages) < 1:
         raise ValueError("limits must be positive")
+    args.output.mkdir(parents=True, exist_ok=True)
+    # One shared input trace covers recent, contacts, saved groups, and group
+    # member subflows.  Low-level click/scroll helpers append to this file.
+    os.environ["WECHAT_INPUT_LOG"] = str((args.output / "input-events.jsonl").resolve())
     tesseract = open_group.resolve_tesseract(args.tesseract)
     if tesseract is None:
         raise RuntimeError("tesseract_not_found")
@@ -158,7 +162,6 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     if not activation["activated"]:
         raise RuntimeError("weixin_activation_failed")
     window = activation["window"]
-    args.output.mkdir(parents=True, exist_ok=True)
     selected_directories = {
         "recent": bool({"recent_people", "recent_groups"} & set(tasks)),
         "contacts": "contacts" in tasks,

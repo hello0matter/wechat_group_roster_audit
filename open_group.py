@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from collections import defaultdict
 from ctypes import wintypes
 from pathlib import Path
@@ -236,9 +237,50 @@ def gui_thread_handles() -> tuple[int, int, int]:
     return int(info.hwndActive or 0), int(info.hwndFocus or 0), int(info.hwndCaret or 0)
 
 
+def _input_log_path() -> Path | None:
+    value = os.environ.get("WECHAT_INPUT_LOG", "").strip()
+    if not value:
+        return None
+    path = Path(value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _log_input(action: str, *, point: tuple[int, int], delta: int | None = None) -> None:
+    """Append a best-effort audit record for every synthetic mouse action."""
+    path = _input_log_path()
+    if path is None:
+        return
+    try:
+        cursor = tuple(map(int, win32gui.GetCursorPos()))
+    except (OSError, win32gui.error):
+        cursor = None
+    try:
+        foreground = int(win32gui.GetForegroundWindow() or 0)
+        _, pid = win32process.GetWindowThreadProcessId(foreground) if foreground else (0, 0)
+    except (OSError, win32gui.error):
+        foreground, pid = 0, 0
+    event: dict[str, object] = {
+        "time": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "action": action,
+        "point": [int(point[0]), int(point[1])],
+        "cursor_before": list(cursor) if cursor else None,
+        "foreground_hwnd": foreground,
+        "foreground_pid": int(pid),
+    }
+    if delta is not None:
+        event["delta"] = int(delta)
+    try:
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def click_screen_point(point: tuple[int, int]) -> None:
     """Click through SendInput; current Weixin ignores legacy mouse_event clicks."""
     x, y = map(int, point)
+    _log_input("click", point=(x, y))
     desktop = audit.virtual_desktop_rect()
     width = max(1, desktop.right - desktop.left - 1)
     height = max(1, desktop.bottom - desktop.top - 1)
@@ -270,6 +312,7 @@ def scroll_screen_point(point: tuple[int, int], delta: int) -> None:
     batch also prevents the pointer from briefly landing on a contact row.
     """
     x, y = map(int, point)
+    _log_input("scroll", point=(x, y), delta=delta)
     desktop = audit.virtual_desktop_rect()
     width = max(1, desktop.right - desktop.left - 1)
     height = max(1, desktop.bottom - desktop.top - 1)
@@ -393,6 +436,15 @@ def send_unicode_text(value: str) -> None:
 
 
 def desktop_window_capture(window: dict[str, object], output: Path) -> None:
+    # A stale dictionary can contain a tiny taskbar/transition rectangle after
+    # Weixin is restored. Refresh it from the real HWND before validating or
+    # capturing; mutate in place so coordinate mapping stays consistent.
+    try:
+        left, top, right, bottom = map(int, win32gui.GetWindowRect(int(window["hwnd"])))
+        if right - left >= 450 and bottom - top >= 350:
+            window.update({"left": left, "top": top, "width": right - left, "height": bottom - top})
+    except (KeyError, OSError, win32gui.error, TypeError, ValueError):
+        pass
     visibility = audit.capture_visibility(window, audit.PanelRatios(0, 0, 1, 1))
     if not visibility["fully_visible"]:
         raise RuntimeError(

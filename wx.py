@@ -496,10 +496,13 @@ def scroll_contacts_to_top(window: dict[str, object]) -> None:
     end = point_in_window(
         window, (CONTACTS_SCROLLBAR_X_RATIO, CONTACTS_SCROLLBAR_TOP_Y_RATIO)
     )
+    open_group._log_input("scrollbar-drag", point=start, delta=0)
     open_group.set_cursor_pos(start)
+    open_group._log_input("mouse-down", point=start, delta=0)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
     time.sleep(0.06)
     open_group.set_cursor_pos(end)
+    open_group._log_input("mouse-up", point=end, delta=0)
     time.sleep(0.12)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     time.sleep(LIST_SCROLL_SETTLE_SECONDS)
@@ -1142,6 +1145,11 @@ def main() -> int:
         return 2
     window = activation["window"]
 
+    args.o.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault(
+        "WECHAT_INPUT_LOG", str((args.o / "input-events.jsonl").resolve())
+    )
+
     # `-m chat -f` means contacts: friend detail capture starts from the
     # Contacts sidebar, while plain chat mode starts from conversations.
     nav_point = sidebar_point(
@@ -1165,7 +1173,6 @@ def main() -> int:
             else SEARCH_RESULT_WAIT_OCR_SECONDS
         )
 
-    args.o.mkdir(parents=True, exist_ok=True)
     if args.recent:
         tesseract = open_group.resolve_tesseract(args.tesseract)
         if tesseract is None:
