@@ -200,7 +200,7 @@ class App(tk.Tk):
         member_options.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Label(member_options, text="成员搜索").pack(side="left")
         ttk.Entry(member_options, textvariable=self.member_terms, width=18).pack(side="left", padx=(8, 20))
-        self.start_button = ttk.Button(actions, text="开始选中任务", command=self.run_selected)
+        self.start_button = ttk.Button(actions, text="开始选中任务", command=lambda: self.run_selected(force_restart=True))
         self.start_button.grid(row=4, column=1, sticky="e", pady=(10, 0))
         controls = ttk.Frame(actions)
         controls.grid(row=5, column=0, columnspan=2, sticky="w", pady=(10, 0))
@@ -393,12 +393,12 @@ class App(tk.Tk):
         if self.backup_paused:
             self.pause_file.unlink(missing_ok=True)
             self.backup_paused = False
-            self.pause_button.configure(text="恢复")
+            self.pause_button.configure(text="暂停")
             self.status_var.set("正在执行选中任务...")
             return
         self.pause_file.write_text("pause\n", encoding="ascii")
         self.backup_paused = True
-        self.pause_button.configure(text="暂停")
+        self.pause_button.configure(text="恢复")
         self.status_var.set("已暂停，可修改全局配置后按 Ctrl+Alt+Q 恢复")
 
     def stop_backup(self) -> None:
@@ -517,10 +517,8 @@ class App(tk.Tk):
         self.log_text(result.stdout + result.stderr)
         self.status_var.set("版本切换完成" if result.returncode == 0 else "版本切换失败")
 
-    def run_selected(self) -> None:
-        if self.backup_running:
-            self.log_text("已有备份任务正在运行，请等待完成或关闭窗口终止任务。")
-            return
+    def run_selected(self, *, force_restart: bool = False) -> None:
+        """Start one workflow, or explicitly replace the current workflow."""
         task_values = (
             ("recent_people", self.task_recent_people.get()),
             ("recent_groups", self.task_recent_groups.get()),
@@ -531,6 +529,20 @@ class App(tk.Tk):
         if not tasks:
             messagebox.showwarning("备份操作", "请至少勾选一个任务。")
             return
+        if self.backup_running and not force_restart:
+            self.log_text("任务正在运行，启动快捷键不会创建第二个任务。")
+            return
+        if force_restart and self.backup_running:
+            self.log_text("正在终止旧任务并重新开始。")
+            self.run_generation += 1
+            self.stop_file.write_text("restart\n", encoding="ascii")
+            self.pause_file.unlink(missing_ok=True)
+            for process in list(self.active_processes):
+                self._kill_process_tree(process)
+            self.active_processes.clear()
+            self.backup_running = False
+            self.backup_paused = False
+            self.pause_button.configure(text="暂停")
         self.save_config()
         self.stop_file.unlink(missing_ok=True)
         self.pause_file.unlink(missing_ok=True)
@@ -541,38 +553,13 @@ class App(tk.Tk):
             bundled_root = ROOT / "pywechat2"
             script_args = ["--pywechat-root", str(bundled_root)] if bundled_root.is_dir() else []
         else:
-            # Source checkout fallback for development; portable builds must use
-            # the single bundled runner above and never require uia_backup.py.
             runner_source = ROOT / "backup_runner.py"
             if getattr(sys, "frozen", False) or not runner_source.exists():
-                messagebox.showerror(
-                    "运行环境",
-                    "未找到 wechat_backup_runner.exe。请确认 GUI 与统一运行时位于同一目录。",
-                )
+                messagebox.showerror("运行环境", "未找到 wechat_backup_runner.exe。请确认 GUI 与统一运行时位于同一目录。")
                 return
             interpreter = sys.executable
             script_args = [str(runner_source), "--pywechat-root", self.root_var.get()]
-        args = [
-            interpreter,
-            *script_args,
-            "--workflow",
-            "-t",
-            ",".join(tasks),
-            "-g",
-            self.group_filters.get().strip(),
-            "-k",
-            self.member_terms.get().strip(),
-            "-M",
-            MODE_VALUES.get(self.member_mode.get(), "auto"),
-            "-n",
-            str(self.people_limit.get()),
-            "-G",
-            str(self.group_limit.get()),
-            "-s",
-            str(self.member_pages.get()),
-            "-o",
-            str(output),
-        ]
+        args = [interpreter, *script_args, "--workflow", "-t", ",".join(tasks), "-g", self.group_filters.get().strip(), "-k", self.member_terms.get().strip(), "-M", MODE_VALUES.get(self.member_mode.get(), "auto"), "-n", str(self.people_limit.get()), "-G", str(self.group_limit.get()), "-s", str(self.member_pages.get()), "-o", str(output)]
         env = proxy_env({"mode": self.proxy_mode.get(), "host": self.proxy_host.get(), "port": self.proxy_port.get()})
         env.update({
             "WECHAT_CLICK_DELAY": str(self.click_delay.get()),
@@ -592,32 +579,35 @@ class App(tk.Tk):
             "WECHAT_STOP_FILE": str(self.stop_file),
             "WECHAT_PAUSE_FILE": str(self.pause_file),
         })
-        self.status_var.set("正在执行选中任务...")
+        self.status_var.set("正在执行选中任务…")
         self.backup_running = True
         self.backup_paused = False
+        self.run_generation += 1
+        generation = self.run_generation
+        self.pause_button.configure(text="暂停")
         self.start_button.state(["disabled"])
         self.pause_button.state(["!disabled"])
         self.stop_button.state(["!disabled"])
+        try:
+            process = subprocess.Popen(args, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="gb18030", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except OSError as error:
+            self.backup_running = False
+            self.backup_paused = False
+            self.status_var.set(f"启动失败: {error}")
+            self.start_button.state(["!disabled"])
+            self.pause_button.state(["disabled"])
+            self.stop_button.state(["disabled"])
+            self.pause_button.configure(text="暂停")
+            return
+        self.active_processes.add(process)
         def work() -> None:
-            process = subprocess.Popen(
-                args,
-                cwd=ROOT,
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="gb18030",
-                errors="replace",
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            self.active_processes.add(process)
             try:
-                output, _ = process.communicate()
-                self.events.put(("log", output))
+                output_text, _ = process.communicate()
+                self.events.put(("log", output_text))
                 self.events.put(("status", "备份完成" if process.returncode == 0 else "备份失败"))
             finally:
                 self.active_processes.discard(process)
-                self.events.put(("backup_done", None))
+                self.events.put(("backup_done", generation))
         threading.Thread(target=work, daemon=True).start()
         if self.minimize_after_start.get():
             self.after(150, self.iconify)
@@ -658,15 +648,22 @@ class App(tk.Tk):
                 elif kind == "refresh":
                     self.refresh_versions()
                 elif kind == "backup_done":
+                    if value != self.run_generation:
+                        continue
                     self.backup_running = False
                     self.backup_paused = False
                     self.pause_file.unlink(missing_ok=True)
                     self.start_button.state(["!disabled"])
                     self.pause_button.state(["disabled"])
                     self.stop_button.state(["disabled"])
-                    self.pause_button.configure(text="\u6682\u505c")
+                    self.pause_button.configure(text="暂停")
                 elif kind == "hotkey_start":
-                    self.toggle_pause() if self.backup_paused else self.run_selected()
+                    if self.backup_paused:
+                        self.toggle_pause()
+                    elif not self.backup_running:
+                        self.run_selected()
+                    else:
+                        self.log_text("任务正在运行，启动快捷键不会创建第二个任务。")
                 elif kind == "hotkey_pause":
                     self.toggle_pause()
                 elif kind == "hotkey_stop":
