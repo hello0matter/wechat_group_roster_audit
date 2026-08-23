@@ -182,6 +182,8 @@ def save_recent_mixed(
             stop_reason = "recent_chats_not_detected"
             break
         for row in rows:
+            if wx.consume_skip_request():
+                continue
             if len(people) >= people_limit and len(groups) >= group_limit:
                 stop_reason = "selected_limits_reached"
                 frame.unlink(missing_ok=True)
