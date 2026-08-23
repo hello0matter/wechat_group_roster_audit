@@ -555,13 +555,7 @@ def prepare_group_member_search(
 
 
 def member_scrollbar_reached_bottom(image: Image.Image) -> bool:
-    """Detect the right-side member-list scrollbar at its lower stop.
-
-    The generic left-pane detector is too strict for the member panel because
-    Weixin leaves a bottom margin below the thumb. We also exclude the scrollbar
-    from content comparison, so a moving thumb cannot make a stationary page
-    look changed forever.
-    """
+    """Best-effort diagnostic detector; traversal uses content stability instead."""
     width, height = image.size
     for x in range(round(width * 0.955), round(width * 0.995)):
         run_start = None
@@ -597,13 +591,6 @@ def save_list_pages(
         image, _ = wx.capture_live_window(window, path)
         ensure_term_time(deadline, term, f"list-after-capture-{index + 1}")
         rows = result_member_rows(image)
-        if member_scrollbar_reached_bottom(image):
-            debug_step(directory, "list-bottom-detected", image, term=term, page=index + 1)
-            if not rows:
-                path.unlink(missing_ok=True)
-                break
-            outputs.append(str(path.resolve()))
-            break
         if not rows:
             path.unlink(missing_ok=True)
             break
@@ -618,10 +605,9 @@ def save_list_pages(
         after_path = directory / ".members-after.png"
         after_image, _ = wx.capture_live_window(window, after_path)
         after_path.unlink(missing_ok=True)
-        if member_scrollbar_reached_bottom(after_image):
-            debug_step(directory, "list-bottom-after-scroll", after_image, term=term, page=index + 1)
-            break
-        if not result_page_changed(before, crop_result_panel(after_image)):
+        changed = result_page_changed(before, crop_result_panel(after_image))
+        debug_step(directory, "list-after-scroll-check", after_image, term=term, page=index + 1, changed=changed)
+        if not changed:
             # The current image is the last valid page. Keep it once, but do
             # not issue another wheel event or create a duplicate page.
             break
