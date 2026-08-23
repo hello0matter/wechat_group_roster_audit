@@ -369,7 +369,7 @@ def save_recent_mixed(
     preexisting_auxiliary_windows = wx.wechat_auxiliary_windows()
     include_folded = include_folded and os.environ.get("WECHAT_FOLDED_GROUPS", "1").lower() not in {"0", "false", "no", "off"}
 
-    def return_to_list(*, profile_open: bool = False) -> None:
+    def return_to_list(*, profile_open: bool = False, settings_open: bool = False) -> None:
         wx.close_wechat_auxiliary_windows(
             wx.wechat_auxiliary_windows() - preexisting_auxiliary_windows
         )
@@ -381,7 +381,16 @@ def save_recent_mixed(
             open_group.click_screen_point(
                 (int(current["left"]) + int(current["width"]) - 25, int(current["top"]) + 600)
             )
-            time.sleep(0.2)
+            time.sleep(wx.profile_delay())
+        if settings_open:
+            # Group member backup leaves the chat-settings pane open. The
+            # sidebar Chat button is already selected, so clicking it again
+            # does not restore a clean list. Toggle the same header menu to
+            # close the pane before the next list capture.
+            open_group.click_screen_point(
+                (int(current["left"]) + int(current["width"]) - 62, int(current["top"]) + 84)
+            )
+            time.sleep(wx.settings_delay())
         if start_current_list:
             # Folded chats has its own back arrow. Clicking the global chat
             # navigation closes that scope and can make the next row vanish.
@@ -434,9 +443,45 @@ def save_recent_mixed(
             list_image, _ = wx.capture_live_window(window, frame)
             rows = wx.folded_conversation_rows(list_image)
         if not rows:
-            frame.replace(directory / "recent-mixed-not-detected.png")
-            stop_reason = "recent_chats_not_detected"
-            break
+            # A visible Weixin window can still be on the chat surface after
+            # activation (especially when the previous group left its
+            # settings pane open). Recover the list before declaring the
+            # recent-chat task dead. Do not click arbitrary rows while the
+            # list has not been verified.
+            recovered = False
+            for retry_index in range(1, 4):
+                save_audit_frame(
+                    directory,
+                    page_index + 1,
+                    f"list-retry-{retry_index}-before",
+                    list_image,
+                )
+                current = audit.select_weixin_window(int(window["pid"])) or window
+                open_group.click_screen_point(wx.sidebar_point(current, wx.CHAT_NAV))
+                time.sleep(wx.navigation_delay())
+                retry_path = directory / f".recent-list-retry-{retry_index}.png"
+                retry_image, _ = wx.capture_live_window(current, retry_path)
+                retry_rows = (
+                    wx.folded_conversation_rows(retry_image)
+                    if start_current_list
+                    else wx.recent_conversation_rows(retry_image)
+                )
+                save_audit_frame(
+                    directory,
+                    page_index + 1,
+                    f"list-retry-{retry_index}-after",
+                    retry_image,
+                )
+                retry_path.unlink(missing_ok=True)
+                if retry_rows:
+                    list_image = retry_image
+                    rows = retry_rows
+                    recovered = True
+                    break
+            if not recovered:
+                frame.replace(directory / "recent-mixed-not-detected.png")
+                stop_reason = "recent_chats_not_detected"
+                break
         row = min(rows, key=lambda candidate: candidate.top)
         for row in (row,):
             if wx.consume_skip_request():
@@ -722,7 +767,7 @@ def save_recent_mixed(
             groups.append(result)
             if title_key:
                 seen_groups.add(title_key)
-            return_to_list()
+            return_to_list(settings_open=True)
 
         before, _ = wx.crop_left_pane(list_image)
         frame.unlink(missing_ok=True)

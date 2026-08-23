@@ -274,7 +274,7 @@ class App(tk.Tk):
         ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=11, column=1, sticky="w", padx=10, pady=4)
         ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=11, column=2, sticky="w")
         ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=12, column=0, columnspan=3, sticky="w", pady=4)
-        ttk.Checkbutton(body, text="??????????", variable=self.minimize_after_start).grid(row=13, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="开始后最小化工具窗口", variable=self.minimize_after_start).grid(row=13, column=0, columnspan=3, sticky="w", pady=4)
         hotkeys = (("启动快捷键", self.hotkey_start), ("暂停快捷键", self.hotkey_pause), ("停止快捷键", self.hotkey_stop))
         for row, (label, variable) in enumerate(hotkeys, 14):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
