@@ -71,6 +71,21 @@ def row_is_draft(
     return any("草稿" in line.text for line in lines)
 
 
+def folded_scope_visible(
+    image: Image.Image, tesseract: Path, probe: Path
+) -> bool:
+    """Recognize the folded-chat scope after its entry has been clicked."""
+    try:
+        lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+    except RuntimeError:
+        return False
+    return any(
+        marker in open_group.normalize_text(line.text)
+        for line in wx.left_pane_lines(lines, image)
+        for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
+    )
+
+
 def chat_surface_ready(image: Image.Image) -> bool:
     """Reject the blank right pane shown while a folded row is still opening."""
     crop = image.crop((round(image.width * 0.43), round(image.height * 0.12), image.width, image.height))
@@ -302,18 +317,13 @@ def save_recent_mixed(
         for row in (row,):
             if wx.consume_skip_request():
                 continue
-            if not start_current_list and row_is_draft(
-                list_image, row, tesseract, directory
-            ):
-                skipped_drafts += 1
-                continue
-            if (
+            draft_candidate = (
                 not start_current_list
-                and include_groups
-                and not include_people
-                and wx.recent_row_is_likely_person(list_image, row)
-            ):
-                skipped_people += 1
+                and row_is_draft(list_image, row, tesseract, directory)
+            )
+            if draft_candidate:
+                skipped_drafts += 1
+                save_audit_frame(directory, page_index + 1, "skip-draft", list_image)
                 continue
             if len(people) >= people_limit and len(groups) >= group_limit:
                 stop_reason = "selected_limits_reached"
@@ -341,7 +351,37 @@ def save_recent_mixed(
             opened_probe = directory / ".recent-opened-probe.png"
             opened_image, _ = wx.capture_live_window(window, opened_probe)
             save_audit_frame(directory, page_index + 1, "after-click", opened_image)
-            if start_current_list and not chat_surface_ready(opened_image):
+            if include_groups and not start_current_list and folded_scope_visible(
+                opened_image, tesseract, opened_probe
+            ):
+                opened_probe.unlink(missing_ok=True)
+                folded = save_recent_mixed(
+                    window,
+                    directory / "folded",
+                    tesseract,
+                    include_people=False,
+                    include_groups=include_groups,
+                    people_limit=0,
+                    group_limit=max(0, group_limit - len(groups)),
+                    group_keywords=group_keywords,
+                    member_terms=member_terms,
+                    member_mode=member_mode,
+                    member_pages=member_pages,
+                    start_current_list=True,
+                    include_folded=False,
+                )
+                groups.extend(folded["groups"])
+                return {
+                    "ok": bool(people or groups),
+                    "people": people,
+                    "groups": groups,
+                    "skipped_drafts": skipped_drafts,
+                    "skipped_people": skipped_people,
+                    "folded": folded,
+                    "stop_reason": "folded_scope_processed",
+                    "pages_scanned": page_index + 1,
+                }
+            if not chat_surface_ready(opened_image):
                 opened_probe.unlink(missing_ok=True)
                 return_to_list()
                 continue
