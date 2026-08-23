@@ -259,23 +259,23 @@ class App(tk.Tk):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
         ttk.Label(body, text="群策略").grid(row=6, column=0, sticky="w", pady=4)
-        ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=5, column=1, sticky="w", padx=10, pady=4)
+        ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=6, column=1, sticky="w", padx=10, pady=4)
         ttk.Label(body, text="自动 / 只截图 / 打开详情").grid(row=6, column=2, sticky="w")
-        ttk.Checkbutton(body, text="群成员只截图（禁止点击资料卡）", variable=self.list_if_id).grid(row=6, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="群成员只截图（禁止点击资料卡）", variable=self.list_if_id).grid(row=7, column=0, columnspan=3, sticky="w", pady=4)
         limits = (("联系人上限", self.people_limit, 100000), ("群上限", self.group_limit, 100000), ("每个搜索词页数", self.member_pages, 1000))
-        for row, (label, variable, maximum) in enumerate(limits, 7):
+        for row, (label, variable, maximum) in enumerate(limits, 8):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Spinbox(body, from_=1, to=maximum, textvariable=variable, width=12).grid(row=row, column=1, sticky="w", padx=10, pady=4)
         ttk.Label(body, text="群成员失败策略").grid(row=11, column=0, sticky="w", pady=4)
-        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=10, column=1, sticky="w", padx=10, pady=4)
+        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=11, column=1, sticky="w", padx=10, pady=4)
         ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=11, column=2, sticky="w")
-        ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=11, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=12, column=0, columnspan=3, sticky="w", pady=4)
         hotkeys = (("启动快捷键", self.hotkey_start), ("暂停快捷键", self.hotkey_pause), ("停止快捷键", self.hotkey_stop))
-        for row, (label, variable) in enumerate(hotkeys, 12):
+        for row, (label, variable) in enumerate(hotkeys, 13):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=18).grid(row=row, column=1, padx=10, pady=4)
         buttons = ttk.Frame(body)
-        buttons.grid(row=15, column=0, columnspan=3, pady=(12, 0), sticky="e")
+        buttons.grid(row=17, column=0, columnspan=3, pady=(12, 0), sticky="e")
         ttk.Button(buttons, text="保存并关闭", command=lambda: (self.save_config(), self._restart_hotkeys(), dialog.destroy())).pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
 
