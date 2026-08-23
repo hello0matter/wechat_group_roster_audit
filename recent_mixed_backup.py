@@ -182,7 +182,11 @@ def chat_surface_ready(image: Image.Image) -> bool:
     # clicking the settings button while a folded row is still transitioning.
     pixels = list(rgb.getdata())
     dark_ratio = sum(1 for red, green, blue in pixels if max(red, green, blue) < 180) / max(len(pixels), 1)
-    return sum(ImageStat.Stat(rgb).stddev) > 120 and dark_ratio > 0.012
+    # Normal chats with mostly light message bubbles can have low global
+    # variance. The old 120/0.012 gate rejected real chats and made the group
+    # branch appear to do nothing. Keep a small dark-content guard for the
+    # genuinely blank WeChat logo surface, but accept light normal chats.
+    return sum(ImageStat.Stat(rgb).stddev) > 55 and dark_ratio > 0.008
 
 
 def safe_group_directory(base: Path, index: int, title: str | None) -> Path:
@@ -654,7 +658,7 @@ def save_recent_mixed(
             open_group.click_screen_point(
                 (int(window["left"]) + int(window["width"]) - 62, int(window["top"]) + 84)
             )
-            time.sleep(wx.CONTACT_DETAIL_WAIT_SECONDS)
+            time.sleep(wx.profile_delay())
             settings_path = directory / ".recent-mixed-settings.png"
             settings_image, _ = wx.capture_live_window(window, settings_path)
             settings_lines = open_group.run_ocr(
@@ -674,7 +678,7 @@ def save_recent_mixed(
                 open_group.click_screen_point(
                     wx.screen_point_from_capture(window, settings_image, *direct_avatar)
                 )
-                time.sleep(wx.CONTACT_DETAIL_WAIT_SECONDS)
+                time.sleep(wx.profile_delay())
                 candidate = directory / ".recent-person.png"
                 candidate_image, _ = wx.capture_live_window(window, candidate)
                 candidate_lines = open_group.run_ocr(

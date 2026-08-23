@@ -135,6 +135,8 @@ class App(tk.Tk):
         self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.15)))
         self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))
         self.chat_open_delay = tk.DoubleVar(value=float(self.config_data.get("chat_open_delay", 1.2)))
+        self.navigation_delay = tk.DoubleVar(value=float(self.config_data.get("navigation_delay", 0.45)))
+        self.settings_delay = tk.DoubleVar(value=float(self.config_data.get("settings_delay", 0.55)))
         self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
         self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
         self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
@@ -234,6 +236,8 @@ class App(tk.Tk):
             "scroll_delay": self.scroll_delay.get(),
             "profile_delay": self.profile_delay.get(),
             "chat_open_delay": self.chat_open_delay.get(),
+            "navigation_delay": self.navigation_delay.get() if hasattr(self, "navigation_delay") else 0.45,
+            "settings_delay": self.settings_delay.get() if hasattr(self, "settings_delay") else self.profile_delay.get(),
             "group_error_policy": self.group_error_policy.get(),
             "hotkey_start": self.hotkey_start.get(),
             "hotkey_pause": self.hotkey_pause.get(),
@@ -250,28 +254,28 @@ class App(tk.Tk):
         dialog.grab_set()
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill="both", expand=True)
-        rows = (("点击后延迟（秒）", self.click_delay), ("滚动后等待（秒）", self.scroll_delay), ("打开会话后等待（秒）", self.chat_open_delay), ("打开资料卡后延迟（秒）", self.profile_delay))
+        rows = (('点击后延迟（秒）', self.click_delay), ('滚动后等待（秒）', self.scroll_delay), ('打开会话后等待（秒）', self.chat_open_delay), ('打开资料卡后延迟（秒）', self.profile_delay), ('返回/导航等待（秒）', self.navigation_delay), ('设置面板等待（秒）', self.settings_delay))
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
-        ttk.Label(body, text="群策略").grid(row=3, column=0, sticky="w", pady=4)
-        ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=3, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="自动 / 只截图 / 打开详情").grid(row=3, column=2, sticky="w")
-        ttk.Checkbutton(body, text="群成员只截图（禁止点击资料卡）", variable=self.list_if_id).grid(row=4, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Label(body, text="群策略").grid(row=6, column=0, sticky="w", pady=4)
+        ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=5, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="自动 / 只截图 / 打开详情").grid(row=6, column=2, sticky="w")
+        ttk.Checkbutton(body, text="群成员只截图（禁止点击资料卡）", variable=self.list_if_id).grid(row=6, column=0, columnspan=3, sticky="w", pady=4)
         limits = (("联系人上限", self.people_limit, 100000), ("群上限", self.group_limit, 100000), ("每个搜索词页数", self.member_pages, 1000))
-        for row, (label, variable, maximum) in enumerate(limits, 5):
+        for row, (label, variable, maximum) in enumerate(limits, 7):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Spinbox(body, from_=1, to=maximum, textvariable=variable, width=12).grid(row=row, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="群成员失败策略").grid(row=8, column=0, sticky="w", pady=4)
-        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=8, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=8, column=2, sticky="w")
-        ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=9, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Label(body, text="群成员失败策略").grid(row=11, column=0, sticky="w", pady=4)
+        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=10, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=11, column=2, sticky="w")
+        ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=11, column=0, columnspan=3, sticky="w", pady=4)
         hotkeys = (("启动快捷键", self.hotkey_start), ("暂停快捷键", self.hotkey_pause), ("停止快捷键", self.hotkey_stop))
-        for row, (label, variable) in enumerate(hotkeys, 10):
+        for row, (label, variable) in enumerate(hotkeys, 12):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=18).grid(row=row, column=1, padx=10, pady=4)
         buttons = ttk.Frame(body)
-        buttons.grid(row=13, column=0, columnspan=3, pady=(12, 0), sticky="e")
+        buttons.grid(row=15, column=0, columnspan=3, pady=(12, 0), sticky="e")
         ttk.Button(buttons, text="保存并关闭", command=lambda: (self.save_config(), self._restart_hotkeys(), dialog.destroy())).pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
 
@@ -552,6 +556,8 @@ class App(tk.Tk):
             "WECHAT_SCROLL_DELAY": str(self.scroll_delay.get()),
             "WECHAT_PROFILE_DELAY": str(self.profile_delay.get()),
             "WECHAT_CHAT_OPEN_DELAY": str(self.chat_open_delay.get()),
+            "WECHAT_NAVIGATION_DELAY": str(self.navigation_delay.get()),
+            "WECHAT_SETTINGS_DELAY": str(self.settings_delay.get()),
             "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
             "WECHAT_FOLDED_GROUPS": "1" if self.task_folded_groups.get() else "0",

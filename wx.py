@@ -49,8 +49,33 @@ CHAT_OPEN_ATTEMPTS = 2
 CHAT_OPEN_WAIT_SECONDS = 0.8
 
 
+def _env_delay(name: str, default: float, minimum: float = 0.0) -> float:
+    try:
+        return max(minimum, float(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        return max(minimum, default)
+
+
 def chat_open_delay() -> float:
-    return max(0.1, float(os.environ.get("WECHAT_CHAT_OPEN_DELAY", str(CHAT_OPEN_WAIT_SECONDS))))
+    return _env_delay("WECHAT_CHAT_OPEN_DELAY", CHAT_OPEN_WAIT_SECONDS, 0.1)
+
+
+def profile_delay() -> float:
+    return _env_delay("WECHAT_PROFILE_DELAY", 0.55, 0.05)
+
+
+def navigation_delay() -> float:
+    return _env_delay("WECHAT_NAVIGATION_DELAY", NAVIGATION_WAIT_SECONDS, 0.05)
+
+
+def settings_delay() -> float:
+    return _env_delay("WECHAT_SETTINGS_DELAY", CONTACT_DETAIL_WAIT_SECONDS, 0.05)
+
+
+def scroll_delay() -> float:
+    return _env_delay("WECHAT_SCROLL_DELAY", LIST_SCROLL_SETTLE_SECONDS, 0.0)
+
+
 CONTACT_DETAIL_WAIT_SECONDS = 0.55
 AUXILIARY_WINDOW_WAIT_SECONDS = 4.0
 AUXILIARY_WINDOW_POLL_SECONDS = 0.1
@@ -335,7 +360,7 @@ def expand_saved_groups(
         (heading.top + heading.bottom) // 2,
     )
     open_group.click_screen_point(point)
-    time.sleep(NAVIGATION_WAIT_SECONDS)
+    time.sleep(navigation_delay())
 
     verification_frame = directory / ".saved-groups-expand-verify-frame.png"
     verification_image, _ = capture_live_window(window, verification_frame)
@@ -468,7 +493,7 @@ def click_result_and_verify_chat(
 
 def scroll_list(window: dict[str, object], delta: int = LIST_SCROLL_DELTA) -> None:
     open_group.scroll_screen_point(point_in_window(window, LIST_SCROLL_POINT), delta)
-    time.sleep(LIST_SCROLL_SETTLE_SECONDS)
+    time.sleep(scroll_delay())
 
 
 def recent_scroll_delta() -> int:
@@ -505,7 +530,7 @@ def scroll_contacts_to_top(window: dict[str, object]) -> None:
     open_group._log_input("mouse-up", point=end, delta=0)
     time.sleep(0.12)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-    time.sleep(LIST_SCROLL_SETTLE_SECONDS)
+    time.sleep(scroll_delay())
 
 
 def page_changed(previous: Image.Image, current: Image.Image) -> bool:
@@ -709,12 +734,21 @@ def folded_conversation_rows(image: Image.Image) -> list[open_group.OcrLine]:
 def direct_chat_avatar(
     lines: list[open_group.OcrLine], image: Image.Image
 ) -> tuple[int, int] | None:
-    """Return the sole peer avatar in a direct-chat settings page."""
+    """Return the peer avatar without requiring a successful header OCR pass."""
     normalized = [open_group.normalize_text(line.text) for line in lines]
-    if not any("searchchathistory" in text or "搜索聊天记录" in text for text in normalized):
-        return None
-    add = next((line for line in lines if open_group.normalize_text(line.text) in {"add", "添加"}), None)
+    add = next(
+        (line for line in lines if open_group.normalize_text(line.text) in {"add", "??"}),
+        None,
+    )
     blocks = chat_settings_member_tiles(image)
+    # Direct chat settings normally expose exactly peer + Add. This visual
+    # rule remains usable when OCR misses Chinese/English labels.
+    if add is None and len(blocks) == 2:
+        return blocks[0]
+    if not any(
+        "searchchathistory" in text or "??????" in text for text in normalized
+    ):
+        return None
     if add is not None:
         blocks = [
             point
@@ -722,9 +756,6 @@ def direct_chat_avatar(
             if not add.left - 20 <= point[0] <= add.right + 20
         ]
         return blocks[0] if len(blocks) == 1 else None
-    # Tesseract often misses the outlined English "Add" label. A direct chat
-    # still has exactly two visual tiles: peer avatar followed by Add. Group
-    # settings expose three or more member/add tiles and must be skipped.
     return blocks[0] if len(blocks) == 2 else None
 
 
@@ -830,7 +861,7 @@ def save_recent_contact_pages(
             )
             time.sleep(0.2)
         open_group.click_screen_point(sidebar_point(current, CHAT_NAV))
-        time.sleep(NAVIGATION_WAIT_SECONDS)
+        time.sleep(navigation_delay())
 
     scroll_list_to_top(window)
     for _page in range(MAX_PAGES):
@@ -853,7 +884,7 @@ def save_recent_contact_pages(
             open_group.click_screen_point(
                 (int(window["left"]) + int(window["width"]) - 62, int(window["top"]) + 84)
             )
-            time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
+            time.sleep(settings_delay())
             settings_path = directory / ".recent-settings.png"
             settings_image, _ = capture_live_window(window, settings_path)
             settings_lines = open_group.run_ocr(tesseract, settings_path, psm=11, language="chi_sim+eng")
@@ -864,7 +895,7 @@ def save_recent_contact_pages(
                 continue
             auxiliary_windows_before = wechat_auxiliary_windows()
             open_group.click_screen_point(screen_point_from_capture(window, settings_image, *avatar))
-            time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
+            time.sleep(settings_delay())
             window = audit.select_weixin_window(int(window["pid"])) or window
             candidate = directory / ".recent-candidate.png"
             candidate_image, _ = capture_live_window(window, candidate)
@@ -924,7 +955,7 @@ def expand_contacts(
         (heading.top + heading.bottom) // 2,
     )
     open_group.click_screen_point(point)
-    time.sleep(NAVIGATION_WAIT_SECONDS)
+    time.sleep(navigation_delay())
     frame.unlink(missing_ok=True)
     verify = directory / ".contacts-expand-verify.png"
     verify_image, _ = capture_live_window(window, verify)
@@ -975,7 +1006,7 @@ def save_contact_detail_pages(
         open_group.click_screen_point(
             screen_point_from_capture(window, full_image, click_x, click_y)
         )
-        time.sleep(CONTACT_DETAIL_WAIT_SECONDS)
+        time.sleep(settings_delay())
         candidate = directory / ".contact-candidate.png"
         candidate_image, _ = capture_live_window(window, candidate)
         candidate_lines = open_group.run_ocr(tesseract, candidate, psm=11, language="chi_sim+eng")
@@ -1159,7 +1190,7 @@ def main() -> int:
         else (CONTACTS_NAV if args.f else (CHAT_NAV if args.m == "chat" else CONTACTS_NAV)),
     )
     open_group.click_screen_point(nav_point)
-    time.sleep(NAVIGATION_WAIT_SECONDS)
+    time.sleep(navigation_delay())
 
     saved_group_search = args.m == "saved" and not args.f and args.q is not None
     if args.q is not None and not saved_group_search:
