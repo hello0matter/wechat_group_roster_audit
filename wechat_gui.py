@@ -22,7 +22,42 @@ from tkinter import filedialog, messagebox, ttk
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 CONFIG = ROOT / "gui_config.json"
+HELP_FILE = ROOT / "说明.txt"
 DEFAULT_PYWECHAT = Path(r"D:\tmp\anjian\pj\st\tmp\pywechat2")
+MODE_LABELS = {"auto": "自动", "list": "只截图", "detail": "打开详情"}
+MODE_VALUES = {label: value for value, label in MODE_LABELS.items()}
+
+
+HELP_TEXT = """微信可见界面备份 - 使用说明
+
+一、开始前
+1. 先打开微信并完成登录，不要锁屏。
+2. 保持微信窗口可见；不要在运行期间手动拖动微信窗口。
+3. 第一次测试建议只勾选“最近会话：群”，群上限设为 1。
+
+二、任务
+最近会话：联系人：扫描最近聊天中的个人。
+最近会话：群：扫描最近聊天中的群，包括“折叠的聊天”列表中的群。
+通讯录：全部联系人：逐个打开联系人资料并截图微信号。
+通讯录：保存的群：扫描通讯录中的保存群。
+
+三、群成员
+成员搜索默认是 1,a-z，表示先搜索数字 1，再搜索 26 个英文字母。
+列表已有微信号时只截图：默认开启。群成员列表已经显示 Weixin ID 时，直接滚动截图，不点击资料卡。
+群策略“自动”：有公开微信号时只截图，否则按详情策略处理。
+群策略“只截图”：始终只滚动截图。
+群策略“打开详情”：逐个打开资料卡；只有关闭“列表已有微信号时只截图”后才会强制使用。
+
+四、输出
+结果在 portable\\artifacts\\gui-workflow\\ 下，每个任务有 result.json 和 PNG 图片。
+
+五、暂停和停止
+可使用界面按钮，或在“全局设置”中修改快捷键。保存配置后下一次运行生效。
+
+六、故障排查
+如果微信白屏，先手动点击微信窗口一次，等待重绘后再运行。
+如果截图数量异常，先把群上限和每个搜索词页数设为 1，查看 result.json 和日志。
+"""
 
 
 def load_config() -> dict[str, object]:
@@ -82,7 +117,8 @@ class App(tk.Tk):
         self.task_saved_groups = tk.BooleanVar(value=bool(self.config_data.get("task_saved_groups", False)))
         self.group_filters = tk.StringVar(value=str(self.config_data.get("group_filters", "")))
         self.member_terms = tk.StringVar(value=str(self.config_data.get("member_terms", "1,a-z")))
-        self.member_mode = tk.StringVar(value=str(self.config_data.get("member_mode", "auto")))
+        saved_mode = str(self.config_data.get("member_mode", "auto"))
+        self.member_mode = tk.StringVar(value=MODE_LABELS.get(saved_mode, saved_mode))
         self.list_if_id = tk.BooleanVar(value=bool(self.config_data.get("list_if_id", True)))
         self.people_limit = tk.IntVar(value=int(self.config_data.get("people_limit", 1000)))
         self.group_limit = tk.IntVar(value=int(self.config_data.get("group_limit", 1000)))
@@ -103,7 +139,10 @@ class App(tk.Tk):
     def _build(self) -> None:
         main = ttk.Frame(self, padding=14)
         main.pack(fill="both", expand=True)
-        ttk.Label(main, text="微信可见界面备份", font=("Microsoft YaHei UI", 15, "bold")).pack(anchor="w")
+        title = ttk.Frame(main)
+        title.pack(fill="x")
+        ttk.Label(title, text="微信可见界面备份", font=("Microsoft YaHei UI", 15, "bold")).pack(side="left")
+        ttk.Button(title, text="?", width=3, command=self.open_help).pack(side="right")
 
         path = ttk.LabelFrame(main, text="pywechat2 版本", padding=10)
         path.pack(fill="x", pady=(12, 8))
@@ -141,30 +180,8 @@ class App(tk.Tk):
         member_options.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Label(member_options, text="成员搜索").pack(side="left")
         ttk.Entry(member_options, textvariable=self.member_terms, width=18).pack(side="left", padx=(8, 20))
-        ttk.Label(member_options, text="群策略").pack(side="left")
-        ttk.Combobox(
-            member_options,
-            textvariable=self.member_mode,
-            values=("auto", "list", "detail"),
-            state="readonly",
-            width=10,
-        ).pack(side="left", padx=(8, 0))
-        ttk.Checkbutton(
-            member_options,
-            text="列表已有微信号时只截图",
-            variable=self.list_if_id,
-        ).pack(side="left", padx=(18, 0))
-
-        limits = ttk.Frame(actions)
-        limits.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        ttk.Label(limits, text="联系人上限").pack(side="left")
-        ttk.Spinbox(limits, from_=1, to=100000, textvariable=self.people_limit, width=8).pack(side="left", padx=(5, 14))
-        ttk.Label(limits, text="群上限").pack(side="left")
-        ttk.Spinbox(limits, from_=1, to=100000, textvariable=self.group_limit, width=8).pack(side="left", padx=(5, 14))
-        ttk.Label(limits, text="每个搜索词页数").pack(side="left")
-        ttk.Spinbox(limits, from_=1, to=1000, textvariable=self.member_pages, width=8).pack(side="left", padx=(5, 14))
-        self.start_button = ttk.Button(limits, text="开始选中任务", command=self.run_selected)
-        self.start_button.pack(side="right")
+        self.start_button = ttk.Button(actions, text="开始选中任务", command=self.run_selected)
+        self.start_button.grid(row=4, column=1, sticky="e", pady=(10, 0))
         controls = ttk.Frame(actions)
         controls.grid(row=5, column=0, columnspan=2, sticky="w", pady=(10, 0))
         self.pause_button = ttk.Button(controls, text="暂停", command=self.toggle_pause, state="disabled")
@@ -197,7 +214,7 @@ class App(tk.Tk):
             "task_saved_groups": self.task_saved_groups.get(),
             "group_filters": self.group_filters.get().strip(),
             "member_terms": self.member_terms.get().strip(),
-            "member_mode": self.member_mode.get(),
+            "member_mode": MODE_VALUES.get(self.member_mode.get(), "auto"),
             "list_if_id": self.list_if_id.get(),
             "people_limit": self.people_limit.get(),
             "group_limit": self.group_limit.get(),
@@ -225,17 +242,29 @@ class App(tk.Tk):
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
-        ttk.Label(body, text="群成员失败策略").grid(row=3, column=0, sticky="w", pady=4)
-        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=3, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=3, column=2, sticky="w")
+        ttk.Label(body, text="群策略").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=3, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="自动 / 只截图 / 打开详情").grid(row=3, column=2, sticky="w")
+        ttk.Checkbutton(body, text="列表已有微信号时只截图", variable=self.list_if_id).grid(row=4, column=0, columnspan=3, sticky="w", pady=4)
+        limits = (("联系人上限", self.people_limit, 100000), ("群上限", self.group_limit, 100000), ("每个搜索词页数", self.member_pages, 1000))
+        for row, (label, variable, maximum) in enumerate(limits, 5):
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Spinbox(body, from_=1, to=maximum, textvariable=variable, width=12).grid(row=row, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="群成员失败策略").grid(row=8, column=0, sticky="w", pady=4)
+        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=8, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=8, column=2, sticky="w")
         hotkeys = (("启动快捷键", self.hotkey_start), ("暂停快捷键", self.hotkey_pause), ("停止快捷键", self.hotkey_stop))
-        for row, (label, variable) in enumerate(hotkeys, 4):
+        for row, (label, variable) in enumerate(hotkeys, 9):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=18).grid(row=row, column=1, padx=10, pady=4)
         buttons = ttk.Frame(body)
-        buttons.grid(row=7, column=0, columnspan=3, pady=(12, 0), sticky="e")
+        buttons.grid(row=12, column=0, columnspan=3, pady=(12, 0), sticky="e")
         ttk.Button(buttons, text="保存并关闭", command=lambda: (self.save_config(), self._restart_hotkeys(), dialog.destroy())).pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
+
+    def open_help(self) -> None:
+        HELP_FILE.write_text(HELP_TEXT, encoding="utf-8")
+        os.startfile(str(HELP_FILE))
 
     def _hotkey_parts(self, value: str) -> tuple[int, int]:
         names = [part.strip().upper() for part in value.replace(" ", "").split("+") if part.strip()]
@@ -437,7 +466,7 @@ class App(tk.Tk):
             "-k",
             self.member_terms.get().strip(),
             "-M",
-            self.member_mode.get(),
+            MODE_VALUES.get(self.member_mode.get(), "auto"),
             "-n",
             str(self.people_limit.get()),
             "-G",
