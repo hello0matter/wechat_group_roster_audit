@@ -27,6 +27,7 @@ RESULT_PANEL = (0.60, 0.18, 0.98, 0.96)
 SETTINGS_WAIT_SECONDS = 0.65
 SEARCH_WAIT_SECONDS = 0.65
 PROFILE_WAIT_SECONDS = 0.55
+PROFILE_DISMISS_WAIT_SECONDS = 0.65
 SCROLL_WAIT_SECONDS = 0.30
 MAX_PAGES = 1000
 GROUP_RESULTS_CROP = (0.09, 0.10, 0.55, 0.93)
@@ -169,6 +170,65 @@ def member_search_visible(window: dict[str, object]) -> bool:
         return False
     finally:
         probe.unlink(missing_ok=True)
+
+
+def close_member_profile(
+    window: dict[str, object],
+    directory: Path,
+    ordinal: int,
+) -> bool:
+    """Dismiss one member card and prove the member panel is usable again."""
+    before = directory / f".debug-before-dismiss-{ordinal:04d}.png"
+    image, _ = wx.capture_live_window(window, before)
+    debug_step(
+        directory,
+        "before-dismiss",
+        image,
+        ordinal=ordinal,
+        point=wx.point_in_window(window, GROUP_SEARCH_POINT),
+    )
+    # Focusing the member search box dismisses the profile card without using
+    # Escape, which can close the group settings surface in some Weixin builds.
+    open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
+    time.sleep(wait_seconds("WECHAT_PROFILE_DISMISS_DELAY", PROFILE_DISMISS_WAIT_SECONDS))
+    after = directory / f".debug-after-dismiss-{ordinal:04d}.png"
+    after_image, _ = wx.capture_live_window(window, after)
+    rows = result_member_rows(after_image)
+    visible = member_search_visible(window)
+    debug_step(
+        directory,
+        "after-dismiss",
+        after_image,
+        ordinal=ordinal,
+        rows=len(rows),
+        search_visible=visible,
+    )
+    if visible and rows:
+        return True
+
+    # The settings pane may have collapsed while the card was open. Re-open it
+    # once, then refocus search and verify before allowing the next click.
+    point = (
+        int(window["left"]) + int(window["width"]) - 62,
+        int(window["top"]) + 84,
+    )
+    open_group.click_screen_point(point)
+    time.sleep(wait_seconds("WECHAT_SETTINGS_DELAY", SETTINGS_WAIT_SECONDS))
+    open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
+    time.sleep(wait_seconds("WECHAT_PROFILE_DISMISS_DELAY", PROFILE_DISMISS_WAIT_SECONDS))
+    recovered = directory / f".debug-after-recover-{ordinal:04d}.png"
+    recovered_image, _ = wx.capture_live_window(window, recovered)
+    recovered_rows = result_member_rows(recovered_image)
+    recovered_visible = member_search_visible(window)
+    debug_step(
+        directory,
+        "after-recover",
+        recovered_image,
+        ordinal=ordinal,
+        rows=len(recovered_rows),
+        search_visible=recovered_visible,
+    )
+    return recovered_visible and bool(recovered_rows)
 
 
 def weixin_has_keyboard_focus(hwnd: int) -> bool:
@@ -390,16 +450,34 @@ def save_detail_pages(
         if not rows:
             page_path.unlink(missing_ok=True)
             break
-        for row in rows:
+        row_index = 0
+        while row_index < len(rows):
+            # Re-capture before every click. A profile card can resize the
+            # settings pane, making coordinates from the previous frame stale.
+            current_path = directory / ".member-results-current.png"
+            current_image, _ = wx.capture_live_window(window, current_path)
+            current_rows = result_member_rows(current_image)
+            if row_index >= len(current_rows):
+                current_path.unlink(missing_ok=True)
+                raise RuntimeError("group_member_rows_disappeared")
+            row = current_rows[row_index]
             # Click the nickname area just to the right of the avatar. Clicking
             # the avatar itself can start a drag in newer Weixin builds, while
             # the row center may hit the lower action area.
-            click_x = min(image.width - 48, row.right + 55)
+            click_x = min(current_image.width - 48, row.right + 55)
             click_y = row.top + max(8, min(18, (row.bottom - row.top) // 3))
+            debug_step(
+                directory,
+                f"before-detail-click-{row_index + 1:04d}",
+                current_image,
+                ordinal=row_index + 1,
+                point=wx.screen_point_from_capture(window, current_image, click_x, click_y),
+                row=(row.left, row.top, row.right, row.bottom),
+            )
             open_group.click_screen_point(
                 wx.screen_point_from_capture(
                     window,
-                    image,
+                    current_image,
                     click_x,
                     click_y,
                 )
@@ -418,8 +496,10 @@ def save_detail_pages(
                 outputs.append(str(output.resolve()))
             else:
                 candidate.unlink(missing_ok=True)
-            open_group.click_screen_point(wx.point_in_window(window, PROFILE_DISMISS_POINT))
-            time.sleep(0.18)
+            current_path.unlink(missing_ok=True)
+            if not close_member_profile(window, directory, row_index + 1):
+                raise RuntimeError("group_member_panel_not_recovered")
+            row_index += 1
         before = crop_result_panel(image)
         page_path.unlink(missing_ok=True)
         scroll_member_results(window)
