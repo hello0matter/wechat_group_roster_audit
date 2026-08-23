@@ -104,6 +104,37 @@ def folded_view_visible(
     return any(row.top > marker.bottom + 8 for row in rows)
 
 
+def row_has_folded_entry(
+    image: Image.Image,
+    row: open_group.OcrLine,
+    tesseract: Path,
+    directory: Path,
+) -> bool:
+    """Recognize the special folded entry using only the clicked list row."""
+    crop_box = (
+        round(image.width * 0.14),
+        max(0, row.top - 12),
+        round(image.width * 0.72),
+        min(image.height, row.bottom + 16),
+    )
+    crop = image.crop(crop_box).resize(
+        ((crop_box[2] - crop_box[0]) * 2, (crop_box[3] - crop_box[1]) * 2),
+        Image.Resampling.LANCZOS,
+    )
+    probe = directory / f".folded-entry-row-{row.top}.png"
+    crop.save(probe)
+    try:
+        lines = open_group.run_ocr(tesseract, probe, psm=7, language="chi_sim+eng")
+    except RuntimeError:
+        return False
+    finally:
+        probe.unlink(missing_ok=True)
+    return any(
+        any(marker in open_group.normalize_text(line.text) for marker in FOLDED_MARKERS)
+        for line in lines
+    )
+
+
 def opened_left_has_draft(
     image: Image.Image,
     tesseract: Path,
@@ -397,7 +428,26 @@ def save_recent_mixed(
                     "pages_scanned": page_index + 1,
                 }
             window = audit.select_weixin_window(int(window["pid"])) or window
+            folded_entry_candidate = (
+                not start_current_list
+                and row_has_folded_entry(list_image, row, tesseract, directory)
+            )
+            red_candidate = (
+                not start_current_list
+                and wx.recent_row_has_red_ink(list_image, row)
+            )
             save_audit_frame(directory, page_index + 1, "before-click", list_image)
+            save_audit_event(
+                directory,
+                {
+                    "step": page_index + 1,
+                    "stage": "row-classification",
+                    "scope": "recent",
+                    "row": row_audit(row),
+                    "folded_entry_candidate": folded_entry_candidate,
+                    "red_candidate": red_candidate,
+                },
+            )
             click_capture = (
                 round(list_image.width * (0.18 if start_current_list else 0.135)),
                 (row.top + row.bottom) // 2,
@@ -441,8 +491,9 @@ def save_recent_mixed(
                     ],
                 },
             )
-            if include_groups and not start_current_list and folded_scope_visible(
-                opened_image, tesseract, opened_probe
+            if include_groups and not start_current_list and (
+                folded_entry_candidate
+                or folded_scope_visible(opened_image, tesseract, opened_probe)
             ):
                 opened_probe.unlink(missing_ok=True)
                 folded = save_recent_mixed(
@@ -471,7 +522,9 @@ def save_recent_mixed(
                     "stop_reason": "folded_scope_processed",
                     "pages_scanned": page_index + 1,
                 }
-            if opened_left_has_draft(opened_image, tesseract, opened_probe, row):
+            if red_candidate and opened_left_has_draft(
+                opened_image, tesseract, opened_probe, row
+            ):
                 skipped_drafts += 1
                 save_audit_frame(directory, page_index + 1, "skip-draft-after-click", opened_image)
                 save_audit_event(

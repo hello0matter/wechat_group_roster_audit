@@ -8,6 +8,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 import ctypes
 import ctypes.wintypes
 import tkinter as tk
@@ -289,20 +290,69 @@ class App(tk.Tk):
 
     def _start_hotkeys(self) -> None:
         self.hotkey_shutdown.clear()
+
         def worker() -> None:
             user32 = ctypes.windll.user32
             thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
             self.hotkey_thread_id = thread_id
-            bindings = ((1, self.hotkey_start.get(), "hotkey_start"), (2, self.hotkey_pause.get(), "hotkey_pause"), (3, self.hotkey_stop.get(), "hotkey_stop"), (4, "Ctrl+Alt+J", "hotkey_skip"))
+            bindings = (
+                (1, self.hotkey_start.get(), "hotkey_start"),
+                (2, self.hotkey_pause.get(), "hotkey_pause"),
+                (3, self.hotkey_stop.get(), "hotkey_stop"),
+                (4, "Ctrl+Alt+J", "hotkey_skip"),
+            )
+            # RegisterHotKey can silently fail when an older GUI instance or
+            # another utility already owns the combination. Use it only as a
+            # best-effort registration and always keep the polling fallback.
+            registration = []
             for hotkey_id, value, _name in bindings:
                 modifiers, key = self._hotkey_parts(value)
-                user32.RegisterHotKey(0, hotkey_id, modifiers, key)
-            message = ctypes.wintypes.MSG()
-            while not self.hotkey_shutdown.is_set() and user32.GetMessageW(ctypes.byref(message), 0, 0, 0) > 0:
-                if message.message == 0x0312:
-                    self.events.put((bindings[message.wParam - 1][2], None))
-            for hotkey_id, _value, _name in bindings:
-                user32.UnregisterHotKey(0, hotkey_id)
+                registered = bool(user32.RegisterHotKey(0, hotkey_id, modifiers | 0x4000, key))
+                registration.append({"id": hotkey_id, "value": value, "registered": registered})
+            try:
+                (ROOT / "hotkey_status.json").write_text(
+                    json.dumps(
+                        {"pid": os.getpid(), "mode": "polling_fallback", "bindings": registration},
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+
+            previous = {hotkey_id: False for hotkey_id, _value, _name in bindings}
+
+            def is_down(value: str) -> bool:
+                modifiers, key = self._hotkey_parts(value)
+                required = []
+                if modifiers & 0x0002:
+                    required.append(0x11)  # VK_CONTROL
+                if modifiers & 0x0004:
+                    required.append(0x10)  # VK_SHIFT
+                if modifiers & 0x0001:
+                    required.append(0x12)  # VK_MENU / Alt
+                if not all(bool(user32.GetAsyncKeyState(code) & 0x8000) for code in required):
+                    return False
+                if modifiers & 0x0008 and not (
+                    bool(user32.GetAsyncKeyState(0x5B) & 0x8000)
+                    or bool(user32.GetAsyncKeyState(0x5C) & 0x8000)
+                ):
+                    return False
+                return bool(user32.GetAsyncKeyState(key) & 0x8000)
+
+            try:
+                while not self.hotkey_shutdown.is_set():
+                    for hotkey_id, value, name in bindings:
+                        down = is_down(value)
+                        if down and not previous[hotkey_id]:
+                            self.events.put((name, None))
+                        previous[hotkey_id] = down
+                    time.sleep(0.04)
+            finally:
+                for hotkey_id, _value, _name in bindings:
+                    user32.UnregisterHotKey(0, hotkey_id)
+
         threading.Thread(target=worker, daemon=True).start()
 
     def _restart_hotkeys(self) -> None:
