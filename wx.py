@@ -623,6 +623,56 @@ def recent_conversation_rows(image: Image.Image) -> list[open_group.OcrLine]:
     return rows
 
 
+def recent_row_is_draft(image: Image.Image, row: open_group.OcrLine) -> bool:
+    """Detect the red 草稿 marker without OCRing every conversation row."""
+    x1 = round(image.width * 0.16)
+    x2 = round(image.width * 0.62)
+    y1 = max(0, row.top - 4)
+    y2 = min(image.height, row.bottom + 5)
+    crop = image.crop((x1, y1, x2, y2)).convert("RGB")
+    pixels = list(crop.getdata())
+    red = sum(
+        1
+        for red_value, green, blue in pixels
+        if red_value > 170
+        and red_value > green * 1.35
+        and red_value > blue * 1.35
+        and green < 150
+    )
+    return red >= 40 and red / max(len(pixels), 1) >= 0.0015
+
+
+def recent_row_avatar_score(image: Image.Image, row: open_group.OcrLine) -> float:
+    """Score internal seams in the avatar; group collages have strong seams."""
+    x1 = round(image.width * 0.085)
+    x2 = round(image.width * 0.145)
+    center = (row.top + row.bottom) // 2
+    half_height = max(12, min(27, (row.bottom - row.top) // 2))
+    crop = image.crop((x1, center - half_height, x2, center + half_height)).convert("RGB")
+    small = crop.resize((30, 30), Image.Resampling.BILINEAR)
+    pixels = small.load()
+
+    def difference(first: tuple[int, int, int], second: tuple[int, int, int]) -> float:
+        return sum(abs(left - right) for left, right in zip(first, second)) / 3
+
+    vertical = []
+    horizontal = []
+    for seam in (8, 9, 10, 19, 20, 21):
+        vertical.extend(
+            difference(pixels[seam, y], pixels[seam - 1, y]) for y in range(30)
+        )
+    for seam in (8, 9, 10, 19, 20, 21):
+        horizontal.extend(
+            difference(pixels[x, seam], pixels[x, seam - 1]) for x in range(30)
+        )
+    return (sum(vertical) / len(vertical) + sum(horizontal) / len(horizontal)) / 2
+
+
+def recent_row_is_likely_person(image: Image.Image, row: open_group.OcrLine) -> bool:
+    """Return true only for a clearly single-avatar row; ambiguous rows remain eligible."""
+    return recent_row_avatar_score(image, row) < 18
+
+
 def folded_conversation_rows(image: Image.Image) -> list[open_group.OcrLine]:
     """Detect rows in the narrower folded-chat pane used by newer Weixin."""
     left, right = round(image.width * 0.12), round(image.width * 0.25)

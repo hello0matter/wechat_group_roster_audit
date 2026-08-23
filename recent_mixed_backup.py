@@ -184,6 +184,8 @@ def save_recent_mixed(
     groups: list[dict[str, object]] = []
     seen_people: set[str] = set()
     seen_groups: set[str] = set()
+    skipped_drafts = 0
+    skipped_people = 0
     preexisting_auxiliary_windows = wx.wechat_auxiliary_windows()
     include_folded = include_folded and os.environ.get("WECHAT_FOLDED_GROUPS", "1").lower() not in {"0", "false", "no", "off"}
 
@@ -259,6 +261,17 @@ def save_recent_mixed(
         for row in rows:
             if wx.consume_skip_request():
                 continue
+            if not start_current_list and wx.recent_row_is_draft(list_image, row):
+                skipped_drafts += 1
+                continue
+            if (
+                not start_current_list
+                and include_groups
+                and not include_people
+                and wx.recent_row_is_likely_person(list_image, row)
+            ):
+                skipped_people += 1
+                continue
             if len(people) >= people_limit and len(groups) >= group_limit:
                 stop_reason = "selected_limits_reached"
                 frame.unlink(missing_ok=True)
@@ -266,6 +279,8 @@ def save_recent_mixed(
                     "ok": bool(people or groups),
                     "people": people,
                     "groups": groups,
+                    "skipped_drafts": skipped_drafts,
+                    "skipped_people": skipped_people,
                     "stop_reason": stop_reason,
                     "pages_scanned": page_index + 1,
                 }
@@ -357,6 +372,8 @@ def save_recent_mixed(
                         "ok": bool(people or groups),
                         "people": people,
                         "groups": groups,
+                        "skipped_drafts": skipped_drafts,
+                        "skipped_people": skipped_people,
                         "stop_reason": "group_error_stop",
                         "pages_scanned": page_index + 1,
                     }
@@ -380,6 +397,8 @@ def save_recent_mixed(
         "ok": bool(people or groups),
         "people": people,
         "groups": groups,
+        "skipped_drafts": skipped_drafts,
+        "skipped_people": skipped_people,
         "stop_reason": stop_reason,
         "pages_scanned": page_index + 1,
     }
