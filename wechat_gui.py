@@ -138,6 +138,7 @@ class App(tk.Tk):
         self.navigation_delay = tk.DoubleVar(value=float(self.config_data.get("navigation_delay", 0.45)))
         self.settings_delay = tk.DoubleVar(value=float(self.config_data.get("settings_delay", 0.55)))
         self.recent_scroll_delta = tk.IntVar(value=int(self.config_data.get("recent_scroll_delta", -120)))
+        self.minimize_after_start = tk.BooleanVar(value=bool(self.config_data.get("minimize_after_start", True)))
         self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
         self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
         self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
@@ -240,6 +241,7 @@ class App(tk.Tk):
             "navigation_delay": self.navigation_delay.get() if hasattr(self, "navigation_delay") else 0.45,
             "settings_delay": self.settings_delay.get() if hasattr(self, "settings_delay") else self.profile_delay.get(),
             "recent_scroll_delta": self.recent_scroll_delta.get(),
+            "minimize_after_start": self.minimize_after_start.get(),
             "group_error_policy": self.group_error_policy.get(),
             "hotkey_start": self.hotkey_start.get(),
             "hotkey_pause": self.hotkey_pause.get(),
@@ -272,12 +274,13 @@ class App(tk.Tk):
         ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=11, column=1, sticky="w", padx=10, pady=4)
         ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=11, column=2, sticky="w")
         ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=12, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="??????????", variable=self.minimize_after_start).grid(row=13, column=0, columnspan=3, sticky="w", pady=4)
         hotkeys = (("启动快捷键", self.hotkey_start), ("暂停快捷键", self.hotkey_pause), ("停止快捷键", self.hotkey_stop))
-        for row, (label, variable) in enumerate(hotkeys, 13):
+        for row, (label, variable) in enumerate(hotkeys, 14):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=18).grid(row=row, column=1, padx=10, pady=4)
         buttons = ttk.Frame(body)
-        buttons.grid(row=17, column=0, columnspan=3, pady=(12, 0), sticky="e")
+        buttons.grid(row=18, column=0, columnspan=3, pady=(12, 0), sticky="e")
         ttk.Button(buttons, text="保存并关闭", command=lambda: (self.save_config(), self._restart_hotkeys(), dialog.destroy())).pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
 
@@ -593,6 +596,8 @@ class App(tk.Tk):
                 self.active_processes.discard(process)
                 self.events.put(("backup_done", None))
         threading.Thread(target=work, daemon=True).start()
+        if self.minimize_after_start.get():
+            self.after(150, self.iconify)
 
     def close_app(self) -> None:
         """Stop child runners before closing so no automation remains behind."""
