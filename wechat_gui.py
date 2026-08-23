@@ -149,6 +149,7 @@ class App(tk.Tk):
         self.hotkey_minimize = tk.StringVar(value=str(self.config_data.get("hotkey_minimize", "Ctrl+Alt+N")))
         self.skip_file = ROOT / "skip.request"
         self.stop_file = ROOT / "stop.request"
+        self.pause_file = ROOT / "pause.request"
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.close_app)
         self._start_hotkeys()
@@ -389,18 +390,16 @@ class App(tk.Tk):
     def toggle_pause(self) -> None:
         if not self.backup_running or not self.active_processes:
             return
-        for process in list(self.active_processes):
-            try:
-                target = psutil.Process(process.pid)
-                if self.backup_paused:
-                    target.resume()
-                else:
-                    target.suspend()
-            except (OSError, psutil.Error):
-                pass
-        self.backup_paused = not self.backup_paused
-        self.pause_button.configure(text="继续" if self.backup_paused else "暂停")
-        self.status_var.set("已暂停" if self.backup_paused else "正在执行选中任务...")
+        if self.backup_paused:
+            self.pause_file.unlink(missing_ok=True)
+            self.backup_paused = False
+            self.pause_button.configure(text="??")
+            self.status_var.set("????????...")
+            return
+        self.pause_file.write_text("pause\n", encoding="ascii")
+        self.backup_paused = True
+        self.pause_button.configure(text="??")
+        self.status_var.set("??????????????")
 
     def stop_backup(self) -> None:
         self.stop_file.write_text("stop\n", encoding="ascii")
@@ -534,6 +533,7 @@ class App(tk.Tk):
             return
         self.save_config()
         self.stop_file.unlink(missing_ok=True)
+        self.pause_file.unlink(missing_ok=True)
         output = ROOT / "artifacts" / "gui-workflow"
         portable_runner = ROOT / "wechat_backup_runner.exe"
         if portable_runner.exists():
@@ -590,6 +590,7 @@ class App(tk.Tk):
             "WECHAT_FOLDED_GROUPS": "1" if self.task_folded_groups.get() else "0",
             "WECHAT_SKIP_FILE": str(self.skip_file),
             "WECHAT_STOP_FILE": str(self.stop_file),
+            "WECHAT_PAUSE_FILE": str(self.pause_file),
         })
         self.status_var.set("正在执行选中任务...")
         self.backup_running = True
@@ -659,12 +660,13 @@ class App(tk.Tk):
                 elif kind == "backup_done":
                     self.backup_running = False
                     self.backup_paused = False
+                    self.pause_file.unlink(missing_ok=True)
                     self.start_button.state(["!disabled"])
                     self.pause_button.state(["disabled"])
                     self.stop_button.state(["disabled"])
                     self.pause_button.configure(text="暂停")
                 elif kind == "hotkey_start":
-                    self.run_selected()
+                    self.toggle_pause() if self.backup_paused else self.run_selected()
                 elif kind == "hotkey_pause":
                     self.toggle_pause()
                 elif kind == "hotkey_stop":

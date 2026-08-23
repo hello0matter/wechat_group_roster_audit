@@ -176,6 +176,7 @@ def result_page_changed(previous: Image.Image, current: Image.Image) -> bool:
 def scroll_member_results(
     window: dict[str, object], *, upward: bool = False, delta: int = 12000
 ) -> None:
+    wx.wait_if_paused()
     open_group.set_cursor_pos(wx.point_in_window(window, GROUP_RESULT_SCROLL_POINT))
     win32api.mouse_event(
         win32con.MOUSEEVENTF_WHEEL,
@@ -212,6 +213,7 @@ class MemberTermTimeout(RuntimeError):
 
 
 def ensure_term_time(clock: TermClock, term: str, stage: str) -> None:
+    clock.started_at += wx.wait_if_paused()
     if wx.stop_requested():
         raise RuntimeError("stop_requested")
     if clock.expired():

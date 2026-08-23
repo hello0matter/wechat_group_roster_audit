@@ -428,6 +428,10 @@ def save_recent_mixed(
         wx.scroll_list_to_top(window)
     stop_reason = "maximum_pages"
     for page_index in range(wx.MAX_PAGES):
+        wx.wait_if_paused()
+        if wx.stop_requested():
+            stop_reason = "stop_requested"
+            break
         frame = directory / ".recent-mixed-list.png"
         window = audit.select_weixin_window(int(window["pid"])) or window
         list_image, _ = wx.capture_live_window(window, frame)
@@ -788,6 +792,11 @@ def save_recent_mixed(
                 "delta": scroll_delta,
             },
         )
+        wx.wait_if_paused()
+        if wx.stop_requested():
+            stop_reason = "stop_requested"
+            scroll_before_path.unlink(missing_ok=True)
+            break
         wx.scroll_list(window, delta=scroll_delta)
         scroll_before_path.unlink(missing_ok=True)
         after_path = directory / ".recent-mixed-after.png"

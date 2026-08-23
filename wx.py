@@ -136,6 +136,21 @@ def emit_result(directory: Path, payload: dict[str, object]) -> None:
     print(serialized)
 
 
+def pause_requested() -> bool:
+    path = os.environ.get("WECHAT_PAUSE_FILE")
+    return bool(path and Path(path).exists())
+
+
+def wait_if_paused() -> float:
+    """Block cooperatively while paused and return the blocked duration."""
+    started = None
+    while pause_requested() and not stop_requested():
+        if started is None:
+            started = time.monotonic()
+        time.sleep(0.08)
+    return 0.0 if started is None else time.monotonic() - started
+
+
 def stop_requested() -> bool:
     """Return true when the GUI or operator requested an immediate stop."""
     path = os.environ.get("WECHAT_STOP_FILE")
@@ -520,6 +535,7 @@ def click_result_and_verify_chat(
 
 
 def scroll_list(window: dict[str, object], delta: int = LIST_SCROLL_DELTA) -> None:
+    wait_if_paused()
     open_group.scroll_screen_point(point_in_window(window, LIST_SCROLL_POINT), delta)
     time.sleep(scroll_delay())
 
