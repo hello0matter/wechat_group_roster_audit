@@ -730,7 +730,7 @@ def save_recent_mixed(
                     return_to_list(profile_open=identifier is not None)
                 continue
 
-            is_group = len(tiles) >= 3 or group_member_backup.settings_visible(settings_lines)
+            is_group = len(tiles) >= 3 or group_member_backup.settings_visible(settings_lines, settings_image.width)
             if not is_group or not include_groups or len(groups) >= group_limit:
                 return_to_list()
                 continue

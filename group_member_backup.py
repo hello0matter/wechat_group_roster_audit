@@ -176,11 +176,21 @@ def scroll_member_results(
 
 
 def replace_search_text(window: dict[str, object], value: str) -> None:
-    open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
+    # The Qt/Weixin search control often has no native focus handle and its
+    # background is not reliably green. The click itself is the reliable
+    # focus operation; capture the probe for audit, then type regardless of
+    # the heuristic focus check.
+    point = wx.point_in_window(window, GROUP_SEARCH_POINT)
+    open_group.click_screen_point(point)
     time.sleep(0.15)
-    if not member_search_visible(window):
-        raise RuntimeError("group_member_search_not_visible")
-    debug_step(Path("artifacts/group-member-debug"), "search-focused", point=wx.point_in_window(window, GROUP_SEARCH_POINT), value=value)
+    debug_step(
+        Path("artifacts/group-member-debug"),
+        "search-focused",
+        point=point,
+        value=value,
+        search_visible=member_search_visible(window),
+        native_focus=weixin_has_keyboard_focus(int(window["hwnd"])),
+    )
     open_group.select_all()
     open_group.send_unicode_text(value)
     time.sleep(SEARCH_WAIT_SECONDS)
@@ -367,12 +377,27 @@ def open_named_group(
     return audit.select_weixin_window(int(window["pid"])) or window
 
 
-def settings_visible(lines: list[open_group.OcrLine]) -> bool:
-    normalized = [open_group.normalize_text(line.text) for line in lines]
+def settings_visible(
+    lines: list[open_group.OcrLine], image_width: int | None = None
+) -> bool:
+    # Only accept settings markers in the right-side panel. Chat messages can
+    # contain the same words and must not make a normal conversation look like
+    # a group settings view.
+    candidates = (
+        line
+        for line in lines
+        if image_width is None or line.left >= round(image_width * 0.65)
+    )
+    normalized = [open_group.normalize_text(line.text) for line in candidates]
     return any(
         marker in text
         for text in normalized
-        for marker in ("groupname", "群聊名称", "myaliasingroup", "我在本群的昵称")
+        for marker in (
+            "groupname",
+            "myaliasingroup",
+            "\u7fa4\u804a\u540d\u79f0",
+            "\u6211\u5728\u672c\u7fa4\u7684\u6635\u79f0",
+        )
     )
 
 
@@ -397,7 +422,7 @@ def prepare_group_member_search(
     debug_step(directory, "settings-before-search", image, search_point=wx.point_in_window(window, GROUP_SEARCH_POINT))
     lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
     for attempt in range(3):
-        if settings_visible(lines):
+        if settings_visible(lines, image.width):
             break
         point = (
             int(window["left"]) + int(window["width"]) - 62,
@@ -408,36 +433,34 @@ def prepare_group_member_search(
         window = audit.select_weixin_window(int(window["pid"])) or window
         image, _ = wx.capture_live_window(window, probe)
         lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
-    if not settings_visible(lines):
+    if not settings_visible(lines, image.width):
         raise RuntimeError("group_settings_not_detected")
 
-    open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
+    search_point = wx.point_in_window(window, GROUP_SEARCH_POINT)
+    open_group.click_screen_point(search_point)
     time.sleep(0.2)
     hwnd = int(window["hwnd"])
-    if not weixin_has_keyboard_focus(hwnd) or not member_search_visible(window):
-        show_all = next(
-            (
-                line
-                for line in lines
-                if open_group.normalize_text(line.text) in {"showall", "查看更多"}
-            ),
-            None,
+    search_visible = member_search_visible(window)
+    debug_step(
+        directory,
+        "search-focus-check",
+        point=search_point,
+        search_visible=search_visible,
+        native_focus=weixin_has_keyboard_focus(hwnd),
+    )
+    if not search_visible and not weixin_has_keyboard_focus(hwnd):
+        # Native focus/UIA handles are unreliable for this Qt control. Retry
+        # the known search point once, then let replace_search_text perform
+        # the actual select-all and typing operation.
+        open_group.click_screen_point(search_point)
+        time.sleep(0.25)
+        debug_step(
+            directory,
+            "search-focus-retry",
+            point=search_point,
+            search_visible=member_search_visible(window),
+            native_focus=weixin_has_keyboard_focus(hwnd),
         )
-        if show_all is None:
-            raise RuntimeError("group_member_search_not_focusable")
-        open_group.click_screen_point(
-            wx.screen_point_from_capture(
-                window,
-                image,
-                (show_all.left + show_all.right) // 2,
-                (show_all.top + show_all.bottom) // 2,
-            )
-        )
-        time.sleep(SETTINGS_WAIT_SECONDS)
-        open_group.click_screen_point(wx.point_in_window(window, GROUP_SEARCH_POINT))
-        time.sleep(0.2)
-        if not weixin_has_keyboard_focus(hwnd) or not member_search_visible(window):
-            raise RuntimeError("group_member_search_not_focusable")
     probe.unlink(missing_ok=True)
     return window, image
 
