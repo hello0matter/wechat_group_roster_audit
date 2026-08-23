@@ -56,10 +56,49 @@ def enter_folded_chats(
     probe = directory / ".folded-chats-entry.png"
     image, _ = wx.capture_live_window(window, probe)
     lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
-    normalized = [open_group.normalize_text(line.text) for line in lines]
+    normalized = [
+        open_group.normalize_text(line.text)
+        for line in wx.left_pane_lines(lines, image)
+    ]
     if any(
         marker in text for text in normalized for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
     ):
+        probe.unlink(missing_ok=True)
+        return True
+    # Chinese folded labels are frequently missed in a full-window OCR pass.
+    # Retry only the left list, enlarged, before giving up on the scope.
+    left_box = (
+        round(image.width * 0.05),
+        round(image.height * 0.08),
+        round(image.width * 0.40),
+        round(image.height * 0.96),
+    )
+    left_crop = image.crop(left_box).resize(
+        ((left_box[2] - left_box[0]) * 2, (left_box[3] - left_box[1]) * 2),
+        Image.Resampling.LANCZOS,
+    )
+    left_probe = directory / ".folded-left-ocr.png"
+    left_crop.save(left_probe)
+    try:
+        left_lines = open_group.run_ocr(tesseract, left_probe, psm=6, language="chi_sim+eng")
+    finally:
+        left_probe.unlink(missing_ok=True)
+    entry = next(
+        (
+            line
+            for line in left_lines
+            if any(
+                marker in open_group.normalize_text(line.text)
+                for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
+            )
+        ),
+        None,
+    )
+    if entry is not None:
+        x = round(left_box[0] + entry.left / 2)
+        y = round(left_box[1] + entry.top / 2)
+        open_group.click_screen_point(wx.screen_point_from_capture(window, image, x, y))
+        time.sleep(max(wx.NAVIGATION_WAIT_SECONDS, wx.chat_open_delay()))
         probe.unlink(missing_ok=True)
         return True
     open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
@@ -156,7 +195,7 @@ def save_recent_mixed(
         )
         current_folded = any(
             marker in open_group.normalize_text(line.text)
-            for line in current_lines
+            for line in wx.left_pane_lines(current_lines, current_image)
             for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
         )
         current_probe.unlink(missing_ok=True)
