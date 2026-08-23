@@ -292,8 +292,8 @@ def wait_if_paused() -> None:
 
 
 def click_screen_point(point: tuple[int, int]) -> None:
-    wait_if_paused()
     """Click through SendInput; current Weixin ignores legacy mouse_event clicks."""
+    wait_if_paused()
     x, y = map(int, point)
     _log_input("click", point=(x, y))
     desktop = audit.virtual_desktop_rect()
@@ -320,13 +320,13 @@ def click_screen_point(point: tuple[int, int]) -> None:
 
 
 def scroll_screen_point(point: tuple[int, int], delta: int) -> None:
-    wait_if_paused()
     """Move to a list and send a modern wheel input event.
 
     Newer Qt Weixin builds accept SendInput clicks but ignore the legacy
     ``mouse_event`` wheel message. Keeping the move and wheel in one input
     batch also prevents the pointer from briefly landing on a contact row.
     """
+    wait_if_paused()
     x, y = map(int, point)
     _log_input("scroll", point=(x, y), delta=delta)
     desktop = audit.virtual_desktop_rect()
@@ -403,8 +403,8 @@ def open_search_result_with_keyboard(
 
 
 def set_cursor_pos(point: tuple[int, int]) -> None:
-    wait_if_paused()
     """Move the cursor with a Win32 fallback for pywin32 SetCursorPos failures."""
+    wait_if_paused()
     x, y = map(int, point)
     try:
         win32api.SetCursorPos((x, y))
@@ -429,8 +429,8 @@ def select_all() -> None:
 
 
 def press_escape() -> None:
-    wait_if_paused()
     """Dismiss a contact detail pane without navigating the list."""
+    wait_if_paused()
     win32api.keybd_event(win32con.VK_ESCAPE, 0, 0, 0)
     win32api.keybd_event(win32con.VK_ESCAPE, 0, win32con.KEYEVENTF_KEYUP, 0)
 
