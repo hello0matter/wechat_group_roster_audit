@@ -584,8 +584,14 @@ def backup_open_group(
         exposed_ids = visible_identifiers(lines, image)
         if list_ids_enabled() and not exposed_ids:
             exposed_ids = visible_identifiers_from_panel(tesseract, image, probe)
-        if mode == "auto":
-            mode = "list" if list_ids_enabled() and exposed_ids else "detail"
+        # The global safety switch takes precedence over a stale `-M detail`
+        # argument: opening cards is unnecessary and risks collapsing the pane
+        # when IDs are already exposed in the result list. Disable the switch
+        # explicitly to opt into detail clicks.
+        if list_ids_enabled() and exposed_ids:
+            mode = "list"
+        elif mode == "auto":
+            mode = "detail"
         decisions[term] = mode
         probe.unlink(missing_ok=True)
         if mode == "list":
