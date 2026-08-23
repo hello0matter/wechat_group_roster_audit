@@ -202,26 +202,30 @@ def run_ocr(
     psm: int = 11,
     language: str = "chi_sim+eng",
 ) -> list[OcrLine]:
-    result = subprocess.run(
-        [
-            str(tesseract),
-            str(image),
-            "stdout",
-            "-l",
-            language,
-            "--psm",
-            str(psm),
-            "tsv",
-        ],
-        capture_output=True,
-        check=False,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"tesseract exited {result.returncode}")
-    return parse_tsv_lines(result.stdout)
+    command = [
+        str(tesseract),
+        str(image),
+        "stdout",
+        "-l",
+        language,
+        "--psm",
+        str(psm),
+        "tsv",
+    ]
+    for attempt in range(2):
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode == 0:
+            return parse_tsv_lines(result.stdout)
+        if attempt == 0:
+            time.sleep(0.25)
+    raise RuntimeError(result.stderr.strip() or f"tesseract exited {result.returncode}")
 
 
 def gui_thread_handles() -> tuple[int, int, int]:
