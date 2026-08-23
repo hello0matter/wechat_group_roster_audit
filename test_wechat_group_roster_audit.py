@@ -638,6 +638,20 @@ class WxCommandTests(unittest.TestCase):
 
         self.assertTrue(group_member_backup.login_required(lines))
 
+    def test_folded_view_requires_rows_below_top_marker(self):
+        image = audit.Image.new("RGB", (1000, 800), "white")
+        for top in (180, 280):
+            image.paste("black", (130, top, 250, top + 55))
+        marker = open_group.OcrLine("\u6298\u53e0\u7684\u804a\u5929", 100, 80, 250, 110)
+
+        self.assertTrue(recent_mixed_backup.folded_view_visible(image, [marker]))
+
+    def test_folded_entry_row_is_not_already_open_folded_view(self):
+        image = audit.Image.new("RGB", (1000, 800), "white")
+        marker = open_group.OcrLine("\u6298\u53e0\u7684\u804a\u5929", 100, 300, 250, 330)
+
+        self.assertFalse(recent_mixed_backup.folded_view_visible(image, [marker]))
+
     def test_recent_group_filters_match_normalized_title(self):
         self.assertTrue(
             recent_mixed_backup.matches_group_keywords(

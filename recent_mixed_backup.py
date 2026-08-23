@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import os
+import json
 import time
 from pathlib import Path
 
@@ -71,6 +72,66 @@ def row_is_draft(
     return any("草稿" in line.text for line in lines)
 
 
+FOLDED_MARKERS = ("\u6298\u53e0\u7684\u804a\u5929", "\u6298\u53e0\u7684\u7fa4\u804a", "minimizedgroups")
+
+
+def folded_marker_line(
+    lines: list[open_group.OcrLine], image: Image.Image
+) -> open_group.OcrLine | None:
+    """Return a folded-chat marker that is actually in Weixin's left pane."""
+    candidates = [
+        line
+        for line in wx.left_pane_lines(lines, image)
+        if any(marker in open_group.normalize_text(line.text) for marker in FOLDED_MARKERS)
+    ]
+    return min(candidates, key=lambda line: (line.top, line.left), default=None)
+
+
+def folded_view_visible(
+    image: Image.Image, lines: list[open_group.OcrLine]
+) -> bool:
+    """Require a top folded heading and rows below it.
+
+    The normal recent list can contain the folded-chat entry row. Checking
+    only OCR text therefore confuses that row with the already-open folded
+    pane. A real folded pane has the marker near the top and at least one
+    folded-list row below the marker.
+    """
+    marker = folded_marker_line(lines, image)
+    if marker is None or marker.top > round(image.height * 0.22):
+        return False
+    rows = wx.folded_conversation_rows(image)
+    return any(row.top > marker.bottom + 8 for row in rows)
+
+
+def opened_left_has_draft(
+    image: Image.Image,
+    tesseract: Path,
+    probe: Path,
+    row: open_group.OcrLine,
+) -> bool:
+    """Detect a draft in the clicked row using a local post-click OCR crop."""
+    y_center = (row.top + row.bottom) // 2
+    crop_box = (
+        round(image.width * 0.14),
+        max(0, y_center - 90),
+        round(image.width * 0.72),
+        min(image.height, y_center + 90),
+    )
+    crop = image.crop(crop_box).resize(
+        ((crop_box[2] - crop_box[0]) * 2, (crop_box[3] - crop_box[1]) * 2),
+        Image.Resampling.LANCZOS,
+    )
+    crop_path = probe.with_name(f"{probe.stem}-row-draft.png")
+    crop.save(crop_path)
+    try:
+        lines = open_group.run_ocr(tesseract, crop_path, psm=7, language="chi_sim+eng")
+    except RuntimeError:
+        return False
+    finally:
+        crop_path.unlink(missing_ok=True)
+    return any("\u8349\u7a3f" in line.text for line in lines)
+
 def folded_scope_visible(
     image: Image.Image, tesseract: Path, probe: Path
 ) -> bool:
@@ -79,12 +140,7 @@ def folded_scope_visible(
         lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
     except RuntimeError:
         return False
-    return any(
-        marker in open_group.normalize_text(line.text)
-        for line in wx.left_pane_lines(lines, image)
-        for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
-    )
-
+    return folded_view_visible(image, lines)
 
 def chat_surface_ready(image: Image.Image) -> bool:
     """Reject the blank right pane shown while a folded row is still opening."""
@@ -110,31 +166,38 @@ def save_audit_frame(directory: Path, step: int, stage: str, image: Image.Image)
     image.save(audit_dir / f"step-{step:04d}-{stage}.png")
 
 
+def save_audit_event(directory: Path, event: dict[str, object]) -> None:
+    """Record the image-to-click binding used for one automation decision."""
+    audit_dir = directory / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    with (audit_dir / "events.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def row_audit(row: open_group.OcrLine) -> dict[str, object]:
+    return {
+        "text": row.text,
+        "left": row.left,
+        "top": row.top,
+        "right": row.right,
+        "bottom": row.bottom,
+    }
+
+
 def enter_folded_chats(
     window: dict[str, object], directory: Path, tesseract: Path
 ) -> bool:
     """Enter Weixin's folded/minimized chat list from the recent list."""
     probe = directory / ".folded-chats-entry.png"
     image, _ = wx.capture_live_window(window, probe)
-    lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
-    normalized = [
-        open_group.normalize_text(line.text)
-        for line in wx.left_pane_lines(lines, image)
-    ]
-    folded_marker = next(
-        (
-            line
-            for line in wx.left_pane_lines(lines, image)
-            if any(
-                marker in open_group.normalize_text(line.text)
-                for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
-            )
-        ),
-        None,
-    )
-    # A heading near the top means we are already inside the folded view.
-    # A lower row is the entry in the normal recent-chat list and must be clicked.
-    if folded_marker is not None and folded_marker.top < round(image.height * 0.22):
+    try:
+        lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+    except RuntimeError:
+        lines = []
+    folded_marker = folded_marker_line(lines, image)
+    # A top marker is only an already-open folded pane when actual folded rows
+    # are visible below it. A recent-list folded-entry row must still be clicked.
+    if folded_view_visible(image, lines):
         probe.unlink(missing_ok=True)
         return True
     if folded_marker is not None:
@@ -165,6 +228,8 @@ def enter_folded_chats(
     left_crop.save(left_probe)
     try:
         left_lines = open_group.run_ocr(tesseract, left_probe, psm=6, language="chi_sim+eng")
+    except RuntimeError:
+        left_lines = []
     finally:
         left_probe.unlink(missing_ok=True)
     entry = next(
@@ -173,7 +238,7 @@ def enter_folded_chats(
             for line in left_lines
             if any(
                 marker in open_group.normalize_text(line.text)
-                for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
+                for marker in FOLDED_MARKERS
             )
         ),
         None,
@@ -189,14 +254,17 @@ def enter_folded_chats(
     time.sleep(wx.NAVIGATION_WAIT_SECONDS)
     wx.scroll_list_to_top(window)
     image, _ = wx.capture_live_window(window, probe)
-    lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+    try:
+        lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+    except RuntimeError:
+        lines = []
     entry = next(
         (
             line
             for line in wx.left_pane_lines(lines, image)
             if any(
                 marker in open_group.normalize_text(line.text)
-                for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
+                for marker in FOLDED_MARKERS
             )
         ),
         None,
@@ -276,14 +344,13 @@ def save_recent_mixed(
     if not start_current_list:
         current_probe = directory / ".current-chat-scope.png"
         current_image, _ = wx.capture_live_window(window, current_probe)
-        current_lines = open_group.run_ocr(
-            tesseract, current_probe, psm=11, language="chi_sim+eng"
-        )
-        current_folded = any(
-            marker in open_group.normalize_text(line.text)
-            for line in wx.left_pane_lines(current_lines, current_image)
-            for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
-        )
+        try:
+            current_lines = open_group.run_ocr(
+                tesseract, current_probe, psm=11, language="chi_sim+eng"
+            )
+        except RuntimeError:
+            current_lines = []
+        current_folded = folded_view_visible(current_image, current_lines)
         current_probe.unlink(missing_ok=True)
     if not start_current_list and not current_folded:
         open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
@@ -317,14 +384,6 @@ def save_recent_mixed(
         for row in (row,):
             if wx.consume_skip_request():
                 continue
-            draft_candidate = (
-                not start_current_list
-                and row_is_draft(list_image, row, tesseract, directory)
-            )
-            if draft_candidate:
-                skipped_drafts += 1
-                save_audit_frame(directory, page_index + 1, "skip-draft", list_image)
-                continue
             if len(people) >= people_limit and len(groups) >= group_limit:
                 stop_reason = "selected_limits_reached"
                 frame.unlink(missing_ok=True)
@@ -339,18 +398,49 @@ def save_recent_mixed(
                 }
             window = audit.select_weixin_window(int(window["pid"])) or window
             save_audit_frame(directory, page_index + 1, "before-click", list_image)
-            open_group.click_screen_point(
-                wx.screen_point_from_capture(
-                    window,
-                    list_image,
-                    round(list_image.width * (0.18 if start_current_list else 0.135)),
-                    (row.top + row.bottom) // 2,
-                )
+            click_capture = (
+                round(list_image.width * (0.18 if start_current_list else 0.135)),
+                (row.top + row.bottom) // 2,
             )
+            click_screen = wx.screen_point_from_capture(
+                window, list_image, *click_capture
+            )
+            save_audit_event(
+                directory,
+                {
+                    "step": page_index + 1,
+                    "stage": "before-click",
+                    "scope": "folded" if start_current_list else "recent",
+                    "image": "before-click",
+                    "image_size": list_image.size,
+                    "row": row_audit(row),
+                    "visible_rows": [row_audit(candidate) for candidate in rows],
+                    "click_capture": click_capture,
+                    "click_screen": click_screen,
+                },
+            )
+            open_group.click_screen_point(click_screen)
             time.sleep(wx.chat_open_delay())
             opened_probe = directory / ".recent-opened-probe.png"
             opened_image, _ = wx.capture_live_window(window, opened_probe)
             save_audit_frame(directory, page_index + 1, "after-click", opened_image)
+            save_audit_event(
+                directory,
+                {
+                    "step": page_index + 1,
+                    "stage": "after-click",
+                    "scope": "folded" if start_current_list else "recent",
+                    "image": "after-click",
+                    "image_size": opened_image.size,
+                    "click_capture": click_capture,
+                    "click_screen": click_screen,
+                    "chat_surface_ready": chat_surface_ready(opened_image),
+                    "folded_rows": [
+                        row_audit(candidate)
+                        for candidate in wx.folded_conversation_rows(opened_image)
+                    ],
+                },
+            )
             if include_groups and not start_current_list and folded_scope_visible(
                 opened_image, tesseract, opened_probe
             ):
@@ -381,6 +471,102 @@ def save_recent_mixed(
                     "stop_reason": "folded_scope_processed",
                     "pages_scanned": page_index + 1,
                 }
+            if opened_left_has_draft(opened_image, tesseract, opened_probe, row):
+                skipped_drafts += 1
+                save_audit_frame(directory, page_index + 1, "skip-draft-after-click", opened_image)
+                save_audit_event(
+                    directory,
+                    {
+                        "step": page_index + 1,
+                        "stage": "skip-draft-after-click",
+                        "scope": "folded" if start_current_list else "recent",
+                        "click_capture": click_capture,
+                        "click_screen": click_screen,
+                    },
+                )
+                opened_probe.unlink(missing_ok=True)
+                return_to_list()
+                continue
+            if not chat_surface_ready(opened_image) and start_current_list:
+                # A folded row can remain selected while the right pane is still
+                # blank. Never click the settings button in this state, and do
+                # not return through the global chat navigation: retry the same
+                # visible bottom row inside the folded scope.
+                folded_opened = False
+                for retry_index in range(1, 4):
+                    save_audit_frame(
+                        directory,
+                        page_index + 1,
+                        f"blank-retry-{retry_index}-before",
+                        opened_image,
+                    )
+                    time.sleep(max(wx.NAVIGATION_WAIT_SECONDS, wx.chat_open_delay()))
+                    retry_path = directory / f".folded-retry-{page_index + 1}-{retry_index}.png"
+                    retry_image, _ = wx.capture_live_window(window, retry_path)
+                    save_audit_frame(
+                        directory,
+                        page_index + 1,
+                        f"blank-retry-{retry_index}-wait",
+                        retry_image,
+                    )
+                    if chat_surface_ready(retry_image):
+                        opened_probe.unlink(missing_ok=True)
+                        opened_probe = retry_path
+                        opened_image = retry_image
+                        folded_opened = True
+                        break
+                    retry_rows = wx.folded_conversation_rows(retry_image)
+                    retry_row = max(retry_rows, key=lambda candidate: candidate.bottom, default=None)
+                    if retry_row is None:
+                        retry_path.unlink(missing_ok=True)
+                        continue
+                    save_audit_frame(
+                        directory,
+                        page_index + 1,
+                        f"blank-retry-{retry_index}-click",
+                        retry_image,
+                    )
+                    open_group.click_screen_point(
+                        wx.screen_point_from_capture(
+                            window,
+                            retry_image,
+                            round(retry_image.width * 0.18),
+                            (retry_row.top + retry_row.bottom) // 2,
+                        )
+                    )
+                    time.sleep(max(wx.NAVIGATION_WAIT_SECONDS, wx.chat_open_delay()))
+                    opened_probe.unlink(missing_ok=True)
+                    opened_probe = directory / f".folded-retry-{page_index + 1}-{retry_index}-after-click.png"
+                    opened_image, _ = wx.capture_live_window(window, opened_probe)
+                    save_audit_frame(
+                        directory,
+                        page_index + 1,
+                        f"blank-retry-{retry_index}-after-click",
+                        opened_image,
+                    )
+                    retry_path.unlink(missing_ok=True)
+                    if chat_surface_ready(opened_image):
+                        folded_opened = True
+                        break
+                if not folded_opened:
+                    save_audit_frame(
+                        directory, page_index + 1, "blank-pane-no-settings", opened_image
+                    )
+                    opened_probe.unlink(missing_ok=True)
+                    # Do not pretend this row was handled and do not scroll
+                    # while the right pane is still blank. Stop the folded pass
+                    # with the audit frames intact so the next run can retry it.
+                    stop_reason = "folded_row_open_failed"
+                    frame.unlink(missing_ok=True)
+                    return {
+                        "ok": bool(people or groups),
+                        "people": people,
+                        "groups": groups,
+                        "skipped_drafts": skipped_drafts,
+                        "skipped_people": skipped_people,
+                        "stop_reason": stop_reason,
+                        "pages_scanned": page_index + 1,
+                    }
             if not chat_surface_ready(opened_image):
                 opened_probe.unlink(missing_ok=True)
                 return_to_list()
