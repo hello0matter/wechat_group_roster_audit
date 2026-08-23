@@ -259,28 +259,30 @@ class App(tk.Tk):
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill="both", expand=True)
         rows = (('点击后延迟（秒）', self.click_delay), ('滚动后等待（秒）', self.scroll_delay), ('打开会话后等待（秒）', self.chat_open_delay), ('打开资料卡后延迟（秒）', self.profile_delay), ('返回/导航等待（秒）', self.navigation_delay), ('设置面板等待（秒）', self.settings_delay))
+        scroll_label = '最近会话滚动量'
+        rows = (*rows, (scroll_label, self.recent_scroll_delta))
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
-        ttk.Label(body, text="群策略").grid(row=6, column=0, sticky="w", pady=4)
-        ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=6, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="自动 / 只截图 / 打开详情").grid(row=6, column=2, sticky="w")
-        ttk.Checkbutton(body, text="群成员只截图（禁止点击资料卡）", variable=self.list_if_id).grid(row=7, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Label(body, text="群策略").grid(row=7, column=0, sticky="w", pady=4)
+        ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=7, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="自动 / 只截图 / 打开详情").grid(row=7, column=2, sticky="w")
+        ttk.Checkbutton(body, text="群成员只截图（禁止点击资料卡）", variable=self.list_if_id).grid(row=8, column=0, columnspan=3, sticky="w", pady=4)
         limits = (("联系人上限", self.people_limit, 100000), ("群上限", self.group_limit, 100000), ("每个搜索词页数", self.member_pages, 1000))
-        for row, (label, variable, maximum) in enumerate(limits, 8):
+        for row, (label, variable, maximum) in enumerate(limits, 9):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Spinbox(body, from_=1, to=maximum, textvariable=variable, width=12).grid(row=row, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="群成员失败策略").grid(row=11, column=0, sticky="w", pady=4)
-        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=11, column=1, sticky="w", padx=10, pady=4)
-        ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=11, column=2, sticky="w")
-        ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=12, column=0, columnspan=3, sticky="w", pady=4)
-        ttk.Checkbutton(body, text="开始后最小化工具窗口", variable=self.minimize_after_start).grid(row=13, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Label(body, text="群成员失败策略").grid(row=12, column=0, sticky="w", pady=4)
+        ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=12, column=1, sticky="w", padx=10, pady=4)
+        ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=12, column=2, sticky="w")
+        ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=13, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="开始后最小化工具窗口", variable=self.minimize_after_start).grid(row=14, column=0, columnspan=3, sticky="w", pady=4)
         hotkeys = (("启动快捷键", self.hotkey_start), ("暂停快捷键", self.hotkey_pause), ("停止快捷键", self.hotkey_stop))
-        for row, (label, variable) in enumerate(hotkeys, 14):
+        for row, (label, variable) in enumerate(hotkeys, 15):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=18).grid(row=row, column=1, padx=10, pady=4)
         buttons = ttk.Frame(body)
-        buttons.grid(row=18, column=0, columnspan=3, pady=(12, 0), sticky="e")
+        buttons.grid(row=19, column=0, columnspan=3, pady=(12, 0), sticky="e")
         ttk.Button(buttons, text="保存并关闭", command=lambda: (self.save_config(), self._restart_hotkeys(), dialog.destroy())).pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
 

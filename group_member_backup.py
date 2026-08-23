@@ -20,7 +20,7 @@ import wx
 
 
 DEFAULT_TERMS = ("1",) + tuple(string.ascii_lowercase)
-GROUP_SEARCH_POINT = (0.80, 0.20)
+GROUP_SEARCH_POINT = (0.80, 0.15)
 GROUP_RESULT_SCROLL_POINT = (0.79, 0.72)
 PROFILE_DISMISS_POINT = (0.50, 0.72)
 RESULT_PANEL = (0.60, 0.18, 0.98, 0.96)
