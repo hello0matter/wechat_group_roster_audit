@@ -19,6 +19,7 @@ from typing import NamedTuple
 import win32api
 import win32con
 import win32gui
+import win32process
 from PIL import ImageGrab
 
 import quick_capture
