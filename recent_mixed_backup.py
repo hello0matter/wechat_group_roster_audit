@@ -41,7 +41,13 @@ def matches_group_keywords(title: str | None, keywords: tuple[str, ...]) -> bool
 def chat_surface_ready(image: Image.Image) -> bool:
     """Reject the blank right pane shown while a folded row is still opening."""
     crop = image.crop((round(image.width * 0.43), round(image.height * 0.12), image.width, image.height))
-    return sum(ImageStat.Stat(crop.convert("RGB")).stddev) > 180
+    rgb = crop.convert("RGB")
+    # The empty pane only contains the pale background and the WeChat logo.
+    # Requiring both variation and a small amount of dark content avoids
+    # clicking the settings button while a folded row is still transitioning.
+    pixels = list(rgb.getdata())
+    dark_ratio = sum(1 for red, green, blue in pixels if max(red, green, blue) < 180) / max(len(pixels), 1)
+    return sum(ImageStat.Stat(rgb).stddev) > 120 and dark_ratio > 0.012
 
 
 def safe_group_directory(base: Path, index: int, title: str | None) -> Path:
@@ -60,9 +66,32 @@ def enter_folded_chats(
         open_group.normalize_text(line.text)
         for line in wx.left_pane_lines(lines, image)
     ]
-    if any(
-        marker in text for text in normalized for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
-    ):
+    folded_marker = next(
+        (
+            line
+            for line in wx.left_pane_lines(lines, image)
+            if any(
+                marker in open_group.normalize_text(line.text)
+                for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
+            )
+        ),
+        None,
+    )
+    # A heading near the top means we are already inside the folded view.
+    # A lower row is the entry in the normal recent-chat list and must be clicked.
+    if folded_marker is not None and folded_marker.top < round(image.height * 0.22):
+        probe.unlink(missing_ok=True)
+        return True
+    if folded_marker is not None:
+        open_group.click_screen_point(
+            wx.screen_point_from_capture(
+                window,
+                image,
+                (folded_marker.left + folded_marker.right) // 2,
+                (folded_marker.top + folded_marker.bottom) // 2,
+            )
+        )
+        time.sleep(max(wx.NAVIGATION_WAIT_SECONDS, wx.chat_open_delay()))
         probe.unlink(missing_ok=True)
         return True
     # Chinese folded labels are frequently missed in a full-window OCR pass.
