@@ -125,12 +125,17 @@ def save_recent_mixed(
                 (int(current["left"]) + int(current["width"]) - 25, int(current["top"]) + 600)
             )
             time.sleep(0.2)
-        open_group.click_screen_point(wx.sidebar_point(current, wx.CHAT_NAV))
-        time.sleep(wx.NAVIGATION_WAIT_SECONDS)
         if start_current_list:
-            # Clicking the chat navigation icon leaves the folded list. Reopen
-            # it before the next row is inspected.
-            enter_folded_chats(current, directory, tesseract)
+            # Folded chats has its own back arrow. Clicking the global chat
+            # navigation closes that scope and can make the next row vanish.
+            open_group.click_screen_point(
+                (int(current["left"]) + round(int(current["width"]) * 0.09),
+                 int(current["top"]) + round(int(current["height"]) * 0.18))
+            )
+            time.sleep(wx.NAVIGATION_WAIT_SECONDS)
+        else:
+            open_group.click_screen_point(wx.sidebar_point(current, wx.CHAT_NAV))
+            time.sleep(wx.NAVIGATION_WAIT_SECONDS)
 
     activation = audit.activate_window(window)
     if activation["activated"]:
