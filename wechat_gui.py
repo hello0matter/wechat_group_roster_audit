@@ -393,13 +393,13 @@ class App(tk.Tk):
         if self.backup_paused:
             self.pause_file.unlink(missing_ok=True)
             self.backup_paused = False
-            self.pause_button.configure(text="??")
-            self.status_var.set("????????...")
+            self.pause_button.configure(text="恢复")
+            self.status_var.set("正在执行选中任务...")
             return
         self.pause_file.write_text("pause\n", encoding="ascii")
         self.backup_paused = True
-        self.pause_button.configure(text="??")
-        self.status_var.set("??????????????")
+        self.pause_button.configure(text="暂停")
+        self.status_var.set("已暂停，可修改全局配置后按 Ctrl+Alt+Q 恢复")
 
     def stop_backup(self) -> None:
         self.stop_file.write_text("stop\n", encoding="ascii")
@@ -664,7 +664,7 @@ class App(tk.Tk):
                     self.start_button.state(["!disabled"])
                     self.pause_button.state(["disabled"])
                     self.stop_button.state(["disabled"])
-                    self.pause_button.configure(text="暂停")
+                    self.pause_button.configure(text="\u6682\u505c")
                 elif kind == "hotkey_start":
                     self.toggle_pause() if self.backup_paused else self.run_selected()
                 elif kind == "hotkey_pause":
