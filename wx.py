@@ -46,6 +46,10 @@ JOIN_BUTTON_REGION = (0.55, 0.3, 0.84, 0.56)
 MIN_JOIN_BUTTON_GREEN_PIXELS = 800
 CHAT_OPEN_ATTEMPTS = 2
 CHAT_OPEN_WAIT_SECONDS = 0.8
+
+
+def chat_open_delay() -> float:
+    return max(0.1, float(os.environ.get("WECHAT_CHAT_OPEN_DELAY", str(CHAT_OPEN_WAIT_SECONDS))))
 CONTACT_DETAIL_WAIT_SECONDS = 0.55
 AUXILIARY_WINDOW_WAIT_SECONDS = 4.0
 AUXILIARY_WINDOW_POLL_SECONDS = 0.1
@@ -599,7 +603,9 @@ def contact_identifier(lines: list[open_group.OcrLine], image: Image.Image) -> s
 
 def recent_conversation_rows(image: Image.Image) -> list[open_group.OcrLine]:
     """Locate visible conversation rows by their avatars in visual order."""
-    left, right = round(image.width * 0.105), round(image.width * 0.16)
+    # Include the unread badge to the upper-left of the avatar. Without this
+    # margin a red badge can split the avatar texture run and hide the row.
+    left, right = round(image.width * 0.075), round(image.width * 0.20)
     variation = [
         sum(ImageStat.Stat(image.crop((left, y, right, y + 1)).convert("RGB")).stddev)
         for y in range(image.height)

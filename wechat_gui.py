@@ -133,6 +133,7 @@ class App(tk.Tk):
         self.click_delay = tk.DoubleVar(value=float(self.config_data.get("click_delay", 0.06)))
         self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.15)))
         self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))
+        self.chat_open_delay = tk.DoubleVar(value=float(self.config_data.get("chat_open_delay", 1.2)))
         self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
         self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
         self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
@@ -231,6 +232,7 @@ class App(tk.Tk):
             "click_delay": self.click_delay.get(),
             "scroll_delay": self.scroll_delay.get(),
             "profile_delay": self.profile_delay.get(),
+            "chat_open_delay": self.chat_open_delay.get(),
             "group_error_policy": self.group_error_policy.get(),
             "hotkey_start": self.hotkey_start.get(),
             "hotkey_pause": self.hotkey_pause.get(),
@@ -247,7 +249,7 @@ class App(tk.Tk):
         dialog.grab_set()
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill="both", expand=True)
-        rows = (("点击后延迟（秒）", self.click_delay), ("滚动后等待（秒）", self.scroll_delay), ("打开资料后延迟（秒）", self.profile_delay))
+        rows = (("点击后延迟（秒）", self.click_delay), ("滚动后等待（秒）", self.scroll_delay), ("打开会话后等待（秒）", self.chat_open_delay), ("打开资料卡后延迟（秒）", self.profile_delay))
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
@@ -499,6 +501,7 @@ class App(tk.Tk):
             "WECHAT_CLICK_DELAY": str(self.click_delay.get()),
             "WECHAT_SCROLL_DELAY": str(self.scroll_delay.get()),
             "WECHAT_PROFILE_DELAY": str(self.profile_delay.get()),
+            "WECHAT_CHAT_OPEN_DELAY": str(self.chat_open_delay.get()),
             "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
             "WECHAT_FOLDED_GROUPS": "1" if self.task_folded_groups.get() else "0",

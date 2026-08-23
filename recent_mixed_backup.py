@@ -210,7 +210,7 @@ def save_recent_mixed(
                     (row.top + row.bottom) // 2,
                 )
             )
-            time.sleep(wx.CHAT_OPEN_WAIT_SECONDS)
+            time.sleep(wx.chat_open_delay())
             opened_probe = directory / ".recent-opened-probe.png"
             opened_image, _ = wx.capture_live_window(window, opened_probe)
             if start_current_list and not chat_surface_ready(opened_image):
