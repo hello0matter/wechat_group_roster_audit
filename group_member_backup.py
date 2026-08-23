@@ -707,6 +707,7 @@ def backup_open_group(
     exposed_identifiers: set[str] = set()
     selected_mode = member_mode
     decisions: dict[str, str] = {}
+    timed_out_terms: list[str] = []
     timeout_seconds = term_timeout if term_timeout is not None else wait_seconds("WECHAT_MEMBER_TERM_TIMEOUT", 40.0)
     if term_timeout is None:
         try:
@@ -758,23 +759,18 @@ def backup_open_group(
             debug_step(directory, "term-finished", term=term, reason="completed", pages=len(outputs))
         except MemberTermTimeout as error:
             decisions[term] = "timeout"
+            timed_out_terms.append(term)
             debug_step(directory, "term-timeout", term=term, stage=error.stage, pages=len(outputs))
-            return {
-                "ok": False,
-                "reason": "member_term_timeout",
-                "term": term,
-                "stage": error.stage,
-                "member_mode": member_mode,
-                "terms": list(terms),
-                "decisions": decisions,
-                "pages": outputs,
-                "identifiers": sorted(seen_identifiers | exposed_identifiers),
-            }
+            # A term timeout is a per-term fallback. The next term starts by
+            # running the normal top-reset routine, so a stuck/long list does
+            # not make the remaining a-z searches disappear.
+            continue
     return {
         "ok": bool(outputs),
         "member_mode": member_mode,
         "terms": list(terms),
         "decisions": decisions,
+        "timed_out_terms": timed_out_terms,
         "pages": outputs,
         "identifiers": sorted(seen_identifiers | exposed_identifiers),
     }
