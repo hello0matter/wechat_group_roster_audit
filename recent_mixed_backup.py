@@ -38,6 +38,39 @@ def matches_group_keywords(title: str | None, keywords: tuple[str, ...]) -> bool
     return any(open_group.normalize_text(keyword) in normalized for keyword in keywords)
 
 
+def row_is_draft(
+    image: Image.Image,
+    row: open_group.OcrLine,
+    tesseract: Path,
+    directory: Path,
+) -> bool:
+    """Confirm 草稿 with OCR; red pixels alone are not sufficient."""
+    if not wx.recent_row_has_red_ink(image, row):
+        return False
+    # The row is already at native resolution; use a moderate enlargement for
+    # Chinese glyphs while keeping the candidate OCR cheap.
+    crop = image.crop(
+        (
+            round(image.width * 0.16),
+            max(0, row.top - 6),
+            round(image.width * 0.72),
+            min(image.height, row.bottom + 8),
+        )
+    ).resize(
+        (round(image.width * 0.56 * 2), max(1, (row.bottom - row.top + 14) * 2)),
+        Image.Resampling.LANCZOS,
+    )
+    probe = directory / f".draft-row-{row.top}.png"
+    crop.save(probe)
+    try:
+        lines = open_group.run_ocr(tesseract, probe, psm=7, language="chi_sim+eng")
+    except RuntimeError:
+        return False
+    finally:
+        probe.unlink(missing_ok=True)
+    return any("草稿" in line.text for line in lines)
+
+
 def chat_surface_ready(image: Image.Image) -> bool:
     """Reject the blank right pane shown while a folded row is still opening."""
     crop = image.crop((round(image.width * 0.43), round(image.height * 0.12), image.width, image.height))
@@ -261,7 +294,9 @@ def save_recent_mixed(
         for row in rows:
             if wx.consume_skip_request():
                 continue
-            if not start_current_list and wx.recent_row_is_draft(list_image, row):
+            if not start_current_list and row_is_draft(
+                list_image, row, tesseract, directory
+            ):
                 skipped_drafts += 1
                 continue
             if (

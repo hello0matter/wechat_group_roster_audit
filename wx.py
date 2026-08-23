@@ -623,8 +623,8 @@ def recent_conversation_rows(image: Image.Image) -> list[open_group.OcrLine]:
     return rows
 
 
-def recent_row_is_draft(image: Image.Image, row: open_group.OcrLine) -> bool:
-    """Detect the red 草稿 marker without OCRing every conversation row."""
+def recent_row_has_red_ink(image: Image.Image, row: open_group.OcrLine) -> bool:
+    """Pre-filter rows containing red ink before the more expensive draft OCR."""
     x1 = round(image.width * 0.16)
     x2 = round(image.width * 0.62)
     y1 = max(0, row.top - 4)
