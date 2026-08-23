@@ -48,7 +48,7 @@ HELP_TEXT = """微信可见界面备份 - 使用说明
 
 三、群成员
 成员搜索默认是 1,a-z，表示先搜索数字 1，再搜索 26 个英文字母。
-列表已有微信号时只截图：默认开启。群成员列表已经显示 Weixin ID 时，直接滚动截图，不点击资料卡。
+群成员只截图（禁止点击资料卡）：默认开启。只滚动并截图成员列表，绝不点击成员。
 群策略“自动”：有公开微信号时只截图，否则按详情策略处理。
 群策略“只截图”：始终只滚动截图。
 群策略“打开详情”：逐个打开资料卡；只有关闭“列表已有微信号时只截图”后才会强制使用。
@@ -254,7 +254,7 @@ class App(tk.Tk):
         ttk.Label(body, text="群策略").grid(row=3, column=0, sticky="w", pady=4)
         ttk.Combobox(body, textvariable=self.member_mode, values=tuple(MODE_LABELS.values()), state="readonly", width=10).grid(row=3, column=1, sticky="w", padx=10, pady=4)
         ttk.Label(body, text="自动 / 只截图 / 打开详情").grid(row=3, column=2, sticky="w")
-        ttk.Checkbutton(body, text="列表已有微信号时只截图", variable=self.list_if_id).grid(row=4, column=0, columnspan=3, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="群成员只截图（禁止点击资料卡）", variable=self.list_if_id).grid(row=4, column=0, columnspan=3, sticky="w", pady=4)
         limits = (("联系人上限", self.people_limit, 100000), ("群上限", self.group_limit, 100000), ("每个搜索词页数", self.member_pages, 1000))
         for row, (label, variable, maximum) in enumerate(limits, 5):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)

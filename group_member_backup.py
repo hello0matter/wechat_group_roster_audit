@@ -585,7 +585,10 @@ def backup_open_group(
         # argument: opening cards is unnecessary and risks collapsing the pane
         # when IDs are already exposed in the result list. Disable the switch
         # explicitly to opt into detail clicks.
-        if list_ids_enabled() and exposed_ids:
+        if list_ids_enabled():
+            # Screenshot-only is a hard safety guarantee. OCR is used for
+            # optional filtering, never to decide whether a member may be
+            # clicked when this switch is enabled.
             mode = "list"
         elif mode == "auto":
             mode = "detail"
