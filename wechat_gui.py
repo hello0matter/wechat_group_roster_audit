@@ -131,7 +131,7 @@ class App(tk.Tk):
         self.group_limit = tk.IntVar(value=int(self.config_data.get("group_limit", 1000)))
         self.member_pages = tk.IntVar(value=int(self.config_data.get("member_pages", 1000)))
         self.click_delay = tk.DoubleVar(value=float(self.config_data.get("click_delay", 0.06)))
-        self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.30)))
+        self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.15)))
         self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))
         self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
         self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
@@ -247,7 +247,7 @@ class App(tk.Tk):
         dialog.grab_set()
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill="both", expand=True)
-        rows = (("点击后延迟（秒）", self.click_delay), ("滚动后延迟（秒）", self.scroll_delay), ("打开资料后延迟（秒）", self.profile_delay))
+        rows = (("点击后延迟（秒）", self.click_delay), ("滚动后等待（秒）", self.scroll_delay), ("打开资料后延迟（秒）", self.profile_delay))
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
