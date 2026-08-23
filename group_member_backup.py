@@ -32,6 +32,10 @@ SCROLL_WAIT_SECONDS = 0.30
 MAX_PAGES = 1000
 GROUP_RESULTS_CROP = (0.09, 0.10, 0.55, 0.93)
 GROUP_RESULTS_SCALE = 2
+VISIBLE_ID_PATTERN = re.compile(
+    r"(?:Weixin\s*ID|微信号)\s*[:：]?\s*([\u4e00-\u9fffA-Za-z0-9_-]{2,})",
+    re.IGNORECASE,
+)
 
 
 def debug_step(directory: Path, name: str, image: Image.Image | None = None, **fields: object) -> None:
@@ -105,7 +109,7 @@ def visible_identifiers(
     for line in lines:
         if line.top < round(image.height * RESULT_PANEL[1]):
             continue
-        match = re.search(r"(?:Weixin\s*ID|微信号)\s*[:：]?\s*([A-Za-z][A-Za-z0-9_-]{4,})", line.text, re.IGNORECASE)
+        match = VISIBLE_ID_PATTERN.search(line.text)
         identifier = match.group(1) if match else wx.contact_identifier([line], image)
         if identifier is not None and identifier not in identifiers:
             identifiers.append(identifier)
@@ -124,11 +128,7 @@ def visible_identifiers_from_panel(
         lines = open_group.run_ocr(tesseract, enlarged_path, psm=6, language="chi_sim+eng")
         identifiers: list[str] = []
         for line in lines:
-            match = re.search(
-                r"(?:Weixin\s*ID|微信号)\s*[:：]?\s*([A-Za-z][A-Za-z0-9_-]{4,})",
-                line.text,
-                re.IGNORECASE,
-            )
+            match = VISIBLE_ID_PATTERN.search(line.text)
             if match and match.group(1) not in identifiers:
                 identifiers.append(match.group(1))
         return identifiers
@@ -554,6 +554,7 @@ def backup_open_group(
     window, _ = prepare_group_member_search(window, directory, tesseract)
     outputs: list[str] = []
     seen_identifiers: set[str] = set()
+    exposed_identifiers: set[str] = set()
     selected_mode = member_mode
     decisions: dict[str, str] = {}
     for term in terms:
@@ -581,6 +582,7 @@ def backup_open_group(
         exposed_ids = visible_identifiers(lines, image)
         if list_ids_enabled() and not exposed_ids:
             exposed_ids = visible_identifiers_from_panel(tesseract, image, probe)
+        exposed_identifiers.update(exposed_ids)
         # The global safety switch takes precedence over a stale `-M detail`
         # argument: opening cards is unnecessary and risks collapsing the pane
         # when IDs are already exposed in the result list. Disable the switch
@@ -616,7 +618,7 @@ def backup_open_group(
         "terms": list(terms),
         "decisions": decisions,
         "pages": outputs,
-        "identifiers": sorted(seen_identifiers),
+        "identifiers": sorted(seen_identifiers | exposed_identifiers),
     }
 
 
