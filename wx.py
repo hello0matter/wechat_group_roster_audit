@@ -613,6 +613,26 @@ def recent_conversation_rows(image: Image.Image) -> list[open_group.OcrLine]:
     return rows
 
 
+def folded_conversation_rows(image: Image.Image) -> list[open_group.OcrLine]:
+    """Detect rows in the narrower folded-chat pane used by newer Weixin."""
+    left, right = round(image.width * 0.12), round(image.width * 0.25)
+    variation = [
+        sum(ImageStat.Stat(image.crop((left, y, right, y + 1)).convert("RGB")).stddev)
+        for y in range(image.height)
+    ]
+    rows: list[open_group.OcrLine] = []
+    run_start = None
+    for y, value in enumerate([*variation, 0.0]):
+        if value > 16 and run_start is None:
+            run_start = y
+        elif value <= 16 and run_start is not None:
+            height = y - run_start
+            if 35 <= height <= 85 and run_start >= round(image.height * 0.18):
+                rows.append(open_group.OcrLine(f"folded-{run_start}", left, run_start, right, y - 1))
+            run_start = None
+    return rows
+
+
 def direct_chat_avatar(
     lines: list[open_group.OcrLine], image: Image.Image
 ) -> tuple[int, int] | None:

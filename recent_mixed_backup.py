@@ -57,7 +57,8 @@ def enter_folded_chats(
         return True
     open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
     time.sleep(wx.NAVIGATION_WAIT_SECONDS)
-    wx.scroll_list_to_top(window)
+    if not start_current_list:
+        wx.scroll_list_to_top(window)
     image, _ = wx.capture_live_window(window, probe)
     lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
     entry = next(
@@ -165,7 +166,17 @@ def save_recent_mixed(
         frame = directory / ".recent-mixed-list.png"
         window = audit.select_weixin_window(int(window["pid"])) or window
         list_image, _ = wx.capture_live_window(window, frame)
-        rows = wx.recent_conversation_rows(list_image)
+        rows = (
+            wx.folded_conversation_rows(list_image)
+            if start_current_list
+            else wx.recent_conversation_rows(list_image)
+        )
+        if start_current_list and not rows:
+            # Give the folded pane a moment to finish its transition before
+            # declaring it empty and leaving the scope.
+            time.sleep(wx.NAVIGATION_WAIT_SECONDS)
+            list_image, _ = wx.capture_live_window(window, frame)
+            rows = wx.folded_conversation_rows(list_image)
         if not rows:
             frame.replace(directory / "recent-mixed-not-detected.png")
             stop_reason = "recent_chats_not_detected"
