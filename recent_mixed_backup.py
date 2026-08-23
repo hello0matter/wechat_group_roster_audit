@@ -64,8 +64,7 @@ def enter_folded_chats(
         return True
     open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
     time.sleep(wx.NAVIGATION_WAIT_SECONDS)
-    if not start_current_list:
-        wx.scroll_list_to_top(window)
+    wx.scroll_list_to_top(window)
     image, _ = wx.capture_live_window(window, probe)
     lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
     entry = next(
@@ -167,7 +166,8 @@ def save_recent_mixed(
     if current_folded:
         start_current_list = True
         include_folded = False
-    wx.scroll_list_to_top(window)
+    if not start_current_list:
+        wx.scroll_list_to_top(window)
     stop_reason = "maximum_pages"
     for page_index in range(wx.MAX_PAGES):
         frame = directory / ".recent-mixed-list.png"
