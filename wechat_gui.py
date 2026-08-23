@@ -137,6 +137,7 @@ class App(tk.Tk):
         self.chat_open_delay = tk.DoubleVar(value=float(self.config_data.get("chat_open_delay", 1.2)))
         self.navigation_delay = tk.DoubleVar(value=float(self.config_data.get("navigation_delay", 0.45)))
         self.settings_delay = tk.DoubleVar(value=float(self.config_data.get("settings_delay", 0.55)))
+        self.recent_scroll_delta = tk.IntVar(value=int(self.config_data.get("recent_scroll_delta", -120)))
         self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
         self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
         self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
@@ -238,6 +239,7 @@ class App(tk.Tk):
             "chat_open_delay": self.chat_open_delay.get(),
             "navigation_delay": self.navigation_delay.get() if hasattr(self, "navigation_delay") else 0.45,
             "settings_delay": self.settings_delay.get() if hasattr(self, "settings_delay") else self.profile_delay.get(),
+            "recent_scroll_delta": self.recent_scroll_delta.get(),
             "group_error_policy": self.group_error_policy.get(),
             "hotkey_start": self.hotkey_start.get(),
             "hotkey_pause": self.hotkey_pause.get(),
@@ -558,6 +560,7 @@ class App(tk.Tk):
             "WECHAT_CHAT_OPEN_DELAY": str(self.chat_open_delay.get()),
             "WECHAT_NAVIGATION_DELAY": str(self.navigation_delay.get()),
             "WECHAT_SETTINGS_DELAY": str(self.settings_delay.get()),
+            "WECHAT_RECENT_SCROLL_DELTA": str(self.recent_scroll_delta.get()),
             "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
             "WECHAT_FOLDED_GROUPS": "1" if self.task_folded_groups.get() else "0",

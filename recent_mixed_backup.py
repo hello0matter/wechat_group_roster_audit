@@ -437,7 +437,7 @@ def save_recent_mixed(
             frame.replace(directory / "recent-mixed-not-detected.png")
             stop_reason = "recent_chats_not_detected"
             break
-        row = max(rows, key=lambda candidate: candidate.bottom)
+        row = min(rows, key=lambda candidate: candidate.top)
         for row in (row,):
             if wx.consume_skip_request():
                 continue
@@ -521,37 +521,24 @@ def save_recent_mixed(
                     ],
                 },
             )
-            if include_groups and not start_current_list and (
-                folded_entry_candidate
-                or folded_scope_visible(opened_image, tesseract, opened_probe)
-            ):
-                opened_probe.unlink(missing_ok=True)
-                folded = save_recent_mixed(
-                    window,
-                    directory / "folded",
-                    tesseract,
-                    include_people=False,
-                    include_groups=include_groups,
-                    people_limit=0,
-                    group_limit=max(0, group_limit - len(groups)),
-                    group_keywords=group_keywords,
-                    member_terms=member_terms,
-                    member_mode=member_mode,
-                    member_pages=member_pages,
-                    start_current_list=True,
-                    include_folded=False,
+            if not start_current_list and folded_entry_candidate:
+                # Record the folded entry in place, but do not enter it yet.
+                # The normal recent list must be scanned from top to bottom;
+                # folded chats are entered exactly once after this pass.
+                save_audit_frame(directory, page_index + 1, "folded-entry-found", opened_image)
+                save_audit_event(
+                    directory,
+                    {
+                        "step": page_index + 1,
+                        "stage": "folded-entry-found",
+                        "scope": "recent",
+                        "click_capture": click_capture,
+                        "click_screen": click_screen,
+                    },
                 )
-                groups.extend(folded["groups"])
-                return {
-                    "ok": bool(people or groups),
-                    "people": people,
-                    "groups": groups,
-                    "skipped_drafts": skipped_drafts,
-                    "skipped_people": skipped_people,
-                    "folded": folded,
-                    "stop_reason": "folded_scope_processed",
-                    "pages_scanned": page_index + 1,
-                }
+                opened_probe.unlink(missing_ok=True)
+                return_to_list()
+                continue
             if red_candidate and opened_left_has_draft(
                 opened_image, tesseract, opened_probe, row
             ):
