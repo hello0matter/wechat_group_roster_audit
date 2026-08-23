@@ -278,7 +278,21 @@ def _log_input(action: str, *, point: tuple[int, int], delta: int | None = None)
         pass
 
 
+def wait_if_paused() -> None:
+    """Block before every low-level input while the GUI pause marker exists."""
+    pause_path = os.environ.get("WECHAT_PAUSE_FILE")
+    if not pause_path:
+        return
+    stop_path = os.environ.get("WECHAT_STOP_FILE")
+    pause_file = Path(pause_path)
+    while pause_file.exists():
+        if stop_path and Path(stop_path).exists():
+            return
+        time.sleep(0.08)
+
+
 def click_screen_point(point: tuple[int, int]) -> None:
+    wait_if_paused()
     """Click through SendInput; current Weixin ignores legacy mouse_event clicks."""
     x, y = map(int, point)
     _log_input("click", point=(x, y))
@@ -306,6 +320,7 @@ def click_screen_point(point: tuple[int, int]) -> None:
 
 
 def scroll_screen_point(point: tuple[int, int], delta: int) -> None:
+    wait_if_paused()
     """Move to a list and send a modern wheel input event.
 
     Newer Qt Weixin builds accept SendInput clicks but ignore the legacy
@@ -388,6 +403,7 @@ def open_search_result_with_keyboard(
 
 
 def set_cursor_pos(point: tuple[int, int]) -> None:
+    wait_if_paused()
     """Move the cursor with a Win32 fallback for pywin32 SetCursorPos failures."""
     x, y = map(int, point)
     try:
@@ -405,6 +421,7 @@ def set_cursor_pos(point: tuple[int, int]) -> None:
 
 
 def select_all() -> None:
+    wait_if_paused()
     win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
     win32api.keybd_event(ord("A"), 0, 0, 0)
     win32api.keybd_event(ord("A"), 0, win32con.KEYEVENTF_KEYUP, 0)
@@ -412,12 +429,14 @@ def select_all() -> None:
 
 
 def press_escape() -> None:
+    wait_if_paused()
     """Dismiss a contact detail pane without navigating the list."""
     win32api.keybd_event(win32con.VK_ESCAPE, 0, 0, 0)
     win32api.keybd_event(win32con.VK_ESCAPE, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 def send_unicode_text(value: str) -> None:
+    wait_if_paused()
     code_units = value.encode("utf-16-le")
     inputs = []
     for offset in range(0, len(code_units), 2):
