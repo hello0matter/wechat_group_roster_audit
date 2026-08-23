@@ -103,12 +103,44 @@ def visible_identifiers(
     """Read IDs already exposed directly in the group member result list."""
     identifiers: list[str] = []
     for line in lines:
-        if line.left < round(image.width * RESULT_PANEL[0]):
+        if line.top < round(image.height * RESULT_PANEL[1]):
             continue
-        identifier = wx.contact_identifier([line], image)
+        match = re.search(r"(?:Weixin\s*ID|微信号)\s*[:：]?\s*([A-Za-z][A-Za-z0-9_-]{4,})", line.text, re.IGNORECASE)
+        identifier = match.group(1) if match else wx.contact_identifier([line], image)
         if identifier is not None and identifier not in identifiers:
             identifiers.append(identifier)
     return identifiers
+
+
+def visible_identifiers_from_panel(
+    tesseract: Path, image: Image.Image, probe: Path
+) -> list[str]:
+    """OCR the member result panel enlarged; grey IDs are missed at full size."""
+    panel = crop_result_panel(image)
+    enlarged = panel.resize((panel.width * 2, panel.height * 2), Image.Resampling.LANCZOS)
+    enlarged_path = probe.with_name(".member-panel-ocr.png")
+    enlarged.save(enlarged_path)
+    try:
+        lines = open_group.run_ocr(tesseract, enlarged_path, psm=6, language="chi_sim+eng")
+        identifiers: list[str] = []
+        for line in lines:
+            match = re.search(
+                r"(?:Weixin\s*ID|微信号)\s*[:：]?\s*([A-Za-z][A-Za-z0-9_-]{4,})",
+                line.text,
+                re.IGNORECASE,
+            )
+            if match and match.group(1) not in identifiers:
+                identifiers.append(match.group(1))
+        return identifiers
+    finally:
+        enlarged_path.unlink(missing_ok=True)
+
+
+def list_ids_enabled() -> bool:
+    """Whether visible member IDs should be captured without opening cards."""
+    return os.environ.get("WECHAT_LIST_IF_ID", "1").strip().lower() not in {
+        "0", "false", "no", "off"
+    }
 
 
 def crop_result_panel(image: Image.Image) -> Image.Image:
@@ -549,8 +581,11 @@ def backup_open_group(
             decisions[term] = "empty"
             continue
         mode = selected_mode
+        exposed_ids = visible_identifiers(lines, image)
+        if list_ids_enabled() and not exposed_ids:
+            exposed_ids = visible_identifiers_from_panel(tesseract, image, probe)
         if mode == "auto":
-            mode = "list" if visible_identifiers(lines, image) else "detail"
+            mode = "list" if list_ids_enabled() and exposed_ids else "detail"
         decisions[term] = mode
         probe.unlink(missing_ok=True)
         if mode == "list":

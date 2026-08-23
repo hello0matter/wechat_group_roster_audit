@@ -83,6 +83,7 @@ class App(tk.Tk):
         self.group_filters = tk.StringVar(value=str(self.config_data.get("group_filters", "")))
         self.member_terms = tk.StringVar(value=str(self.config_data.get("member_terms", "1,a-z")))
         self.member_mode = tk.StringVar(value=str(self.config_data.get("member_mode", "auto")))
+        self.list_if_id = tk.BooleanVar(value=bool(self.config_data.get("list_if_id", True)))
         self.people_limit = tk.IntVar(value=int(self.config_data.get("people_limit", 1000)))
         self.group_limit = tk.IntVar(value=int(self.config_data.get("group_limit", 1000)))
         self.member_pages = tk.IntVar(value=int(self.config_data.get("member_pages", 1000)))
@@ -148,6 +149,11 @@ class App(tk.Tk):
             state="readonly",
             width=10,
         ).pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(
+            member_options,
+            text="列表已有微信号时只截图",
+            variable=self.list_if_id,
+        ).pack(side="left", padx=(18, 0))
 
         limits = ttk.Frame(actions)
         limits.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
@@ -192,6 +198,7 @@ class App(tk.Tk):
             "group_filters": self.group_filters.get().strip(),
             "member_terms": self.member_terms.get().strip(),
             "member_mode": self.member_mode.get(),
+            "list_if_id": self.list_if_id.get(),
             "people_limit": self.people_limit.get(),
             "group_limit": self.group_limit.get(),
             "member_pages": self.member_pages.get(),
@@ -445,6 +452,7 @@ class App(tk.Tk):
             "WECHAT_CLICK_DELAY": str(self.click_delay.get()),
             "WECHAT_SCROLL_DELAY": str(self.scroll_delay.get()),
             "WECHAT_PROFILE_DELAY": str(self.profile_delay.get()),
+            "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
         })
         self.status_var.set("正在执行选中任务...")
