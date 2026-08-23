@@ -34,6 +34,7 @@ MEMBER_RESET_MAX_STEPS = 12
 MEMBER_RESET_STABLE_FRAMES = 2
 MEMBER_RESET_MIN_WHEELS = 3
 MEMBER_RESET_DELTA = 120000
+MEMBER_RESET_NUDGE_DELTA = 1200
 MAX_PAGES = 1000
 GROUP_RESULTS_CROP = (0.09, 0.10, 0.55, 0.93)
 GROUP_RESULTS_SCALE = 2
@@ -228,7 +229,18 @@ def reset_member_results_to_top(
     ensure_term_time(deadline, term, "reset-before")
     scroll_member_results(window, upward=True, delta=MEMBER_RESET_DELTA)
     time.sleep(wait_seconds("WECHAT_MEMBER_RESET_DELAY", MEMBER_RESET_WAIT_SECONDS))
-    debug_step(directory, "term-reset-top", term=term, ok=True, delta=MEMBER_RESET_DELTA)
+    # Some Weixin builds clamp the first huge wheel at a near-top position.
+    # A second, small fixed upward nudge makes the list commit to its true top.
+    scroll_member_results(window, upward=True, delta=MEMBER_RESET_NUDGE_DELTA)
+    time.sleep(wait_seconds("WECHAT_MEMBER_RESET_NUDGE_DELAY", 0.18))
+    debug_step(
+        directory,
+        "term-reset-top",
+        term=term,
+        ok=True,
+        delta=MEMBER_RESET_DELTA,
+        nudge_delta=MEMBER_RESET_NUDGE_DELTA,
+    )
     return True
 
 
