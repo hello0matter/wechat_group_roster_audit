@@ -86,6 +86,18 @@ def emit_result(directory: Path, payload: dict[str, object]) -> None:
     print(serialized)
 
 
+def consume_skip_request() -> bool:
+    """Consume the GUI skip marker once and return whether one was requested."""
+    marker = Path(os.environ.get("WECHAT_SKIP_FILE", "skip.request"))
+    if not marker.exists():
+        return False
+    try:
+        marker.unlink()
+    except OSError:
+        return False
+    return True
+
+
 def point_in_window(
     window: dict[str, object],
     ratios: tuple[float, float],
@@ -857,6 +869,8 @@ def save_contact_detail_pages(
             stream.write(json.dumps({"step": probe_index, "name": name, **fields}, ensure_ascii=False) + "\n")
 
     for _page in range(MAX_PAGES):
+        if consume_skip_request():
+            return outputs, "skipped_by_user"
         if len(outputs) >= limit:
             return outputs, "maximum_contacts"
         frame = directory / ".contacts-list.png"

@@ -451,6 +451,8 @@ def save_list_pages(
     outputs: list[str] = []
     label = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-") or "term"
     for index in range(maximum):
+        if wx.consume_skip_request():
+            break
         path = directory / f"members-{label}-{index + 1:03d}.png"
         image, _ = wx.capture_live_window(window, path)
         rows = result_member_rows(image)
@@ -478,6 +480,8 @@ def save_detail_pages(
 ) -> list[str]:
     outputs: list[str] = []
     for step in range(maximum):
+        if wx.consume_skip_request():
+            break
         # Only use the bottom-most currently visible row. A single missed OCR
         # row can otherwise make an indexed loop jump from A to C; bottom-anchor
         # traversal may revisit a member, but it cannot skip past one.
@@ -553,6 +557,8 @@ def backup_open_group(
     selected_mode = member_mode
     decisions: dict[str, str] = {}
     for term in terms:
+        if wx.consume_skip_request():
+            continue
         for _ in range(3):
             scroll_member_results(window, upward=True)
         replace_search_text(window, term)
@@ -586,6 +592,8 @@ def backup_open_group(
         decisions[term] = mode
         probe.unlink(missing_ok=True)
         if mode == "list":
+            if wx.consume_skip_request():
+                continue
             outputs.extend(save_list_pages(window, directory, term, maximum_pages))
         else:
             debug_step(directory, "before-detail-clicks", image, term=term, rows=len(rows), mode=mode)

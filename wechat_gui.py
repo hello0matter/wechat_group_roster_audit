@@ -137,6 +137,7 @@ class App(tk.Tk):
         self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
         self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
         self.hotkey_stop = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S")), str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S"))))
+        self.skip_file = ROOT / "skip.request"
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.close_app)
         self._start_hotkeys()
@@ -290,7 +291,7 @@ class App(tk.Tk):
             user32 = ctypes.windll.user32
             thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
             self.hotkey_thread_id = thread_id
-            bindings = ((1, self.hotkey_start.get(), "hotkey_start"), (2, self.hotkey_pause.get(), "hotkey_pause"), (3, self.hotkey_stop.get(), "hotkey_stop"))
+            bindings = ((1, self.hotkey_start.get(), "hotkey_start"), (2, self.hotkey_pause.get(), "hotkey_pause"), (3, self.hotkey_stop.get(), "hotkey_stop"), (4, "Ctrl+Alt+J", "hotkey_skip"))
             for hotkey_id, value, _name in bindings:
                 modifiers, key = self._hotkey_parts(value)
                 user32.RegisterHotKey(0, hotkey_id, modifiers, key)
@@ -328,6 +329,10 @@ class App(tk.Tk):
         for process in list(self.active_processes):
             self._kill_process_tree(process)
         self.status_var.set("已停止")
+
+    def skip_current(self) -> None:
+        self.skip_file.write_text("skip\n", encoding="ascii")
+        self.log_text("已请求跳过当前群/联系人")
 
     def _kill_process_tree(self, process: subprocess.Popen[str]) -> None:
         if process.poll() is None:
@@ -493,6 +498,7 @@ class App(tk.Tk):
             "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
             "WECHAT_FOLDED_GROUPS": "1" if self.task_folded_groups.get() else "0",
+            "WECHAT_SKIP_FILE": str(self.skip_file),
         })
         self.status_var.set("正在执行选中任务...")
         self.backup_running = True
@@ -570,6 +576,8 @@ class App(tk.Tk):
                     self.toggle_pause()
                 elif kind == "hotkey_stop":
                     self.stop_backup()
+                elif kind == "hotkey_skip":
+                    self.skip_current()
         except queue.Empty:
             pass
         self.after(150, self._poll)
