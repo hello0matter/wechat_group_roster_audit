@@ -46,10 +46,18 @@ def enter_folded_chats(
     window: dict[str, object], directory: Path, tesseract: Path
 ) -> bool:
     """Enter Weixin's folded/minimized chat list from the recent list."""
+    probe = directory / ".folded-chats-entry.png"
+    image, _ = wx.capture_live_window(window, probe)
+    lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+    normalized = [open_group.normalize_text(line.text) for line in lines]
+    if any(
+        marker in text for text in normalized for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
+    ):
+        probe.unlink(missing_ok=True)
+        return True
     open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
     time.sleep(wx.NAVIGATION_WAIT_SECONDS)
     wx.scroll_list_to_top(window)
-    probe = directory / ".folded-chats-entry.png"
     image, _ = wx.capture_live_window(window, probe)
     lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
     entry = next(
@@ -118,6 +126,10 @@ def save_recent_mixed(
             time.sleep(0.2)
         open_group.click_screen_point(wx.sidebar_point(current, wx.CHAT_NAV))
         time.sleep(wx.NAVIGATION_WAIT_SECONDS)
+        if start_current_list:
+            # Clicking the chat navigation icon leaves the folded list. Reopen
+            # it before the next row is inspected.
+            enter_folded_chats(current, directory, tesseract)
 
     activation = audit.activate_window(window)
     if activation["activated"]:
