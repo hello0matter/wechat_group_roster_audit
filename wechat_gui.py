@@ -144,6 +144,7 @@ class App(tk.Tk):
         self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
         self.hotkey_stop = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S")), str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S"))))
         self.skip_file = ROOT / "skip.request"
+        self.stop_file = ROOT / "stop.request"
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.close_app)
         self._start_hotkeys()
@@ -389,6 +390,7 @@ class App(tk.Tk):
         self.status_var.set("已暂停" if self.backup_paused else "正在执行选中任务...")
 
     def stop_backup(self) -> None:
+        self.stop_file.write_text("stop\n", encoding="ascii")
         for process in list(self.active_processes):
             self._kill_process_tree(process)
         self.status_var.set("已停止")
@@ -518,6 +520,7 @@ class App(tk.Tk):
             messagebox.showwarning("备份操作", "请至少勾选一个任务。")
             return
         self.save_config()
+        self.stop_file.unlink(missing_ok=True)
         output = ROOT / "artifacts" / "gui-workflow"
         portable_runner = ROOT / "wechat_backup_runner.exe"
         if portable_runner.exists():
@@ -570,6 +573,7 @@ class App(tk.Tk):
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
             "WECHAT_FOLDED_GROUPS": "1" if self.task_folded_groups.get() else "0",
             "WECHAT_SKIP_FILE": str(self.skip_file),
+            "WECHAT_STOP_FILE": str(self.stop_file),
         })
         self.status_var.set("正在执行选中任务...")
         self.backup_running = True

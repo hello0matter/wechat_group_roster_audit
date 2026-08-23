@@ -116,6 +116,14 @@ def emit_result(directory: Path, payload: dict[str, object]) -> None:
     print(serialized)
 
 
+def stop_requested() -> bool:
+    """Return true when the GUI or operator requested an immediate stop."""
+    path = os.environ.get("WECHAT_STOP_FILE")
+    if not path:
+        return False
+    return Path(path).exists()
+
+
 def consume_skip_request() -> bool:
     """Consume one queued GUI skip request."""
     marker = Path(os.environ.get("WECHAT_SKIP_FILE", "skip.request"))

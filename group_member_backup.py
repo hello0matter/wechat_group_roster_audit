@@ -474,7 +474,7 @@ def save_list_pages(
     outputs: list[str] = []
     label = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-") or "term"
     for index in range(maximum):
-        if wx.consume_skip_request():
+        if wx.stop_requested() or wx.consume_skip_request():
             break
         path = directory / f"members-{label}-{index + 1:03d}.png"
         image, _ = wx.capture_live_window(window, path)
@@ -483,12 +483,18 @@ def save_list_pages(
             path.unlink(missing_ok=True)
             break
         outputs.append(str(path.resolve()))
+        if wx.stop_requested():
+            break
         before = crop_result_panel(image)
         scroll_member_results(window)
+        if wx.stop_requested():
+            break
         after_path = directory / ".members-after.png"
         after_image, _ = wx.capture_live_window(window, after_path)
         after_path.unlink(missing_ok=True)
         if not result_page_changed(before, crop_result_panel(after_image)):
+            # The current image is the last valid page. Keep it once, but do
+            # not issue another wheel event or create a duplicate page.
             break
     return outputs
 
@@ -503,7 +509,7 @@ def save_detail_pages(
 ) -> list[str]:
     outputs: list[str] = []
     for step in range(maximum):
-        if wx.consume_skip_request():
+        if wx.stop_requested() or wx.consume_skip_request():
             break
         # Only use the bottom-most currently visible row. A single missed OCR
         # row can otherwise make an indexed loop jump from A to C; bottom-anchor
