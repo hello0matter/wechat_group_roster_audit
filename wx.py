@@ -49,9 +49,29 @@ CHAT_OPEN_ATTEMPTS = 2
 CHAT_OPEN_WAIT_SECONDS = 0.8
 
 
-def _env_delay(name: str, default: float, minimum: float = 0.0) -> float:
+def runtime_config_value(name: str, default: object = None) -> object:
+    path = os.environ.get("WECHAT_CONFIG_FILE")
+    if not path:
+        return default
     try:
-        return max(minimum, float(os.environ.get(name, str(default))))
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return default
+    return data.get(name, default)
+
+
+def _setting_value(name: str, default: object) -> object:
+    value = runtime_config_value(name, None)
+    if value is not None:
+        return value
+    env_name = f"WECHAT_{name.upper()}"
+    return os.environ.get(env_name, default)
+
+
+def _env_delay(name: str, default: float, minimum: float = 0.0) -> float:
+    config_name = name.removeprefix("WECHAT_").lower()
+    try:
+        return max(minimum, float(_setting_value(config_name, default)))
     except (TypeError, ValueError):
         return max(minimum, default)
 
@@ -505,12 +525,21 @@ def scroll_list(window: dict[str, object], delta: int = LIST_SCROLL_DELTA) -> No
 
 
 def recent_scroll_delta() -> int:
-    """Return the conservative one-row wheel step used by recent scans."""
+    """Return the configurable wheel step used by recent scans."""
     try:
-        value = int(os.environ.get("WECHAT_RECENT_SCROLL_DELTA", str(RECENT_SCROLL_DELTA)))
-    except ValueError:
+        value = int(_setting_value("recent_scroll_delta", RECENT_SCROLL_DELTA))
+    except (TypeError, ValueError):
         value = RECENT_SCROLL_DELTA
     return -max(1, abs(value))
+
+
+def member_scroll_delta() -> int:
+    """Return the configurable wheel distance used by group member lists."""
+    try:
+        value = int(_setting_value("member_scroll_delta", 12000))
+    except (TypeError, ValueError):
+        value = 12000
+    return max(120, abs(value))
 
 
 def scroll_list_to_top(window: dict[str, object]) -> None:

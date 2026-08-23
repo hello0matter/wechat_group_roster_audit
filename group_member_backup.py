@@ -23,7 +23,7 @@ DEFAULT_TERMS = ("1",) + tuple(string.ascii_lowercase)
 GROUP_SEARCH_POINT = (0.80, 0.15)
 GROUP_RESULT_SCROLL_POINT = (0.79, 0.72)
 PROFILE_DISMISS_POINT = (0.50, 0.72)
-RESULT_PANEL = (0.60, 0.18, 0.98, 0.96)
+RESULT_PANEL = (0.60, 0.18, 0.94, 0.96)
 SETTINGS_WAIT_SECONDS = 0.65
 SEARCH_WAIT_SECONDS = 0.65
 PROFILE_WAIT_SECONDS = 0.55
@@ -67,7 +67,14 @@ def parser() -> argparse.ArgumentParser:
 
 
 def wait_seconds(name: str, default: float) -> float:
-    return max(0.0, float(os.environ.get(name, str(default))))
+    config_name = name.removeprefix("WECHAT_").lower()
+    value = wx.runtime_config_value(config_name, None)
+    if value is None:
+        value = os.environ.get(name, str(default))
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return max(0.0, default)
 
 
 def parse_terms(value: str) -> tuple[str, ...]:
@@ -180,6 +187,23 @@ def scroll_member_results(
     time.sleep(wait_seconds("WECHAT_SCROLL_DELAY", SCROLL_WAIT_SECONDS))
 
 
+class TermClock:
+    def __init__(self, term: str, timeout_seconds: float, hot_reload: bool) -> None:
+        self.term = term
+        self.started_at = time.monotonic()
+        self.timeout_seconds = timeout_seconds
+        self.hot_reload = hot_reload
+
+    def expired(self) -> bool:
+        timeout = self.timeout_seconds
+        if self.hot_reload:
+            try:
+                timeout = float(wx.runtime_config_value("member_term_timeout", timeout))
+            except (TypeError, ValueError):
+                pass
+        return time.monotonic() >= self.started_at + max(1.0, timeout)
+
+
 class MemberTermTimeout(RuntimeError):
     def __init__(self, term: str, stage: str) -> None:
         super().__init__(f"member_term_timeout:{term}:{stage}")
@@ -187,15 +211,15 @@ class MemberTermTimeout(RuntimeError):
         self.stage = stage
 
 
-def ensure_term_time(deadline: float, term: str, stage: str) -> None:
+def ensure_term_time(clock: TermClock, term: str, stage: str) -> None:
     if wx.stop_requested():
         raise RuntimeError("stop_requested")
-    if time.monotonic() >= deadline:
+    if clock.expired():
         raise MemberTermTimeout(term, stage)
 
 
 def reset_member_results_to_top(
-    window: dict[str, object], directory: Path, term: str, deadline: float
+    window: dict[str, object], directory: Path, term: str, deadline: TermClock
 ) -> bool:
     """Overscroll upward and require stable frames before the next search."""
     label = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-") or "term"
@@ -223,7 +247,7 @@ def reset_member_results_to_top(
             debug_step(directory, "term-reset-top", term=term, ok=True, step=step, stable=stable)
             return True
         ensure_term_time(deadline, term, f"reset-wheel-{step}")
-        scroll_member_results(window, upward=True, delta=12000)
+        scroll_member_results(window, upward=True, delta=wx.member_scroll_delta())
         time.sleep(wait_seconds("WECHAT_MEMBER_RESET_DELAY", MEMBER_RESET_WAIT_SECONDS))
         after_path = probe_dir / f"{label}-after-{step:02d}.png"
         after, _ = wx.capture_live_window(window, after_path)
@@ -530,12 +554,38 @@ def prepare_group_member_search(
     return window, image
 
 
+def member_scrollbar_reached_bottom(image: Image.Image) -> bool:
+    """Detect the right-side member-list scrollbar at its lower stop.
+
+    The generic left-pane detector is too strict for the member panel because
+    Weixin leaves a bottom margin below the thumb. We also exclude the scrollbar
+    from content comparison, so a moving thumb cannot make a stationary page
+    look changed forever.
+    """
+    width, height = image.size
+    for x in range(round(width * 0.955), round(width * 0.995)):
+        run_start = None
+        for y in range(round(height * 0.12), height):
+            red, green, blue = image.getpixel((x, y))[:3]
+            neutral = max(red, green, blue) - min(red, green, blue) <= 8 and 70 <= red <= 220
+            if neutral and run_start is None:
+                run_start = y
+            elif not neutral and run_start is not None:
+                if y - run_start >= 8 and y - 1 >= round(height * 0.88):
+                    return True
+                run_start = None
+        if run_start is not None and height - run_start >= 8 and height - 1 >= round(height * 0.88):
+            return True
+    return False
+
+
+
 def save_list_pages(
     window: dict[str, object],
     directory: Path,
     term: str,
     maximum: int,
-    deadline: float,
+    deadline: TermClock,
 ) -> list[str]:
     outputs: list[str] = []
     label = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "-", term).strip("-") or "term"
@@ -547,6 +597,13 @@ def save_list_pages(
         image, _ = wx.capture_live_window(window, path)
         ensure_term_time(deadline, term, f"list-after-capture-{index + 1}")
         rows = result_member_rows(image)
+        if member_scrollbar_reached_bottom(image):
+            debug_step(directory, "list-bottom-detected", image, term=term, page=index + 1)
+            if not rows:
+                path.unlink(missing_ok=True)
+                break
+            outputs.append(str(path.resolve()))
+            break
         if not rows:
             path.unlink(missing_ok=True)
             break
@@ -555,12 +612,15 @@ def save_list_pages(
             break
         before = crop_result_panel(image)
         ensure_term_time(deadline, term, f"list-before-scroll-{index + 1}")
-        scroll_member_results(window)
+        scroll_member_results(window, delta=wx.member_scroll_delta())
         if wx.stop_requested():
             break
         after_path = directory / ".members-after.png"
         after_image, _ = wx.capture_live_window(window, after_path)
         after_path.unlink(missing_ok=True)
+        if member_scrollbar_reached_bottom(after_image):
+            debug_step(directory, "list-bottom-after-scroll", after_image, term=term, page=index + 1)
+            break
         if not result_page_changed(before, crop_result_panel(after_image)):
             # The current image is the last valid page. Keep it once, but do
             # not issue another wheel event or create a duplicate page.
@@ -575,7 +635,7 @@ def save_detail_pages(
     maximum: int,
     tesseract: Path,
     seen_identifiers: set[str],
-    deadline: float,
+    deadline: TermClock,
 ) -> list[str]:
     outputs: list[str] = []
     for step in range(maximum):
@@ -625,7 +685,7 @@ def save_detail_pages(
 
         before_path = directory / ".members-before-step-scroll.png"
         before_image, _ = wx.capture_live_window(window, before_path)
-        scroll_member_results(window, delta=600)
+        scroll_member_results(window, delta=wx.member_scroll_delta())
         time.sleep(wait_seconds("WECHAT_DETAIL_SCROLL_DELAY", SCROLL_WAIT_SECONDS))
         after_path = directory / ".members-after-step.png"
         after_image, _ = wx.capture_live_window(window, after_path)
@@ -659,11 +719,16 @@ def backup_open_group(
     exposed_identifiers: set[str] = set()
     selected_mode = member_mode
     decisions: dict[str, str] = {}
-    timeout_seconds = term_timeout if term_timeout is not None else wait_seconds("WECHAT_MEMBER_TERM_TIMEOUT", 60.0)
+    timeout_seconds = term_timeout if term_timeout is not None else wait_seconds("WECHAT_MEMBER_TERM_TIMEOUT", 40.0)
+    if term_timeout is None:
+        try:
+            timeout_seconds = float(wx.runtime_config_value("member_term_timeout", timeout_seconds))
+        except (TypeError, ValueError):
+            pass
     for term in terms:
         if wx.consume_skip_request():
             continue
-        deadline = time.monotonic() + max(1.0, timeout_seconds)
+        deadline = TermClock(term, timeout_seconds, term_timeout is None)
         try:
             if not reset_member_results_to_top(window, directory, term, deadline):
                 raise MemberTermTimeout(term, "reset-top-not-confirmed")

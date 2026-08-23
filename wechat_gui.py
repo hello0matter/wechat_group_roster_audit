@@ -131,7 +131,7 @@ class App(tk.Tk):
         self.people_limit = tk.IntVar(value=int(self.config_data.get("people_limit", 1000)))
         self.group_limit = tk.IntVar(value=int(self.config_data.get("group_limit", 1000)))
         self.member_pages = tk.IntVar(value=int(self.config_data.get("member_pages", 1000)))
-        self.member_term_timeout = tk.DoubleVar(value=float(self.config_data.get("member_term_timeout", 60.0)))
+        self.member_term_timeout = tk.DoubleVar(value=float(self.config_data.get("member_term_timeout", 40.0)))
         self.click_delay = tk.DoubleVar(value=float(self.config_data.get("click_delay", 0.06)))
         self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.15)))
         self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))
@@ -139,11 +139,13 @@ class App(tk.Tk):
         self.navigation_delay = tk.DoubleVar(value=float(self.config_data.get("navigation_delay", 0.45)))
         self.settings_delay = tk.DoubleVar(value=float(self.config_data.get("settings_delay", 0.55)))
         self.recent_scroll_delta = tk.IntVar(value=int(self.config_data.get("recent_scroll_delta", -120)))
+        self.member_scroll_delta = tk.IntVar(value=int(self.config_data.get("member_scroll_delta", 12000)))
         self.minimize_after_start = tk.BooleanVar(value=bool(self.config_data.get("minimize_after_start", True)))
         self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
         self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
         self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
         self.hotkey_stop = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S")), str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S"))))
+        self.hotkey_maximize = tk.StringVar(value=str(self.config_data.get("hotkey_maximize", "Ctrl+Alt+B")))
         self.skip_file = ROOT / "skip.request"
         self.stop_file = ROOT / "stop.request"
         self._build()
@@ -244,11 +246,13 @@ class App(tk.Tk):
             "navigation_delay": self.navigation_delay.get() if hasattr(self, "navigation_delay") else 0.45,
             "settings_delay": self.settings_delay.get() if hasattr(self, "settings_delay") else self.profile_delay.get(),
             "recent_scroll_delta": self.recent_scroll_delta.get(),
+            "member_scroll_delta": self.member_scroll_delta.get(),
             "minimize_after_start": self.minimize_after_start.get(),
             "group_error_policy": self.group_error_policy.get(),
             "hotkey_start": self.hotkey_start.get(),
             "hotkey_pause": self.hotkey_pause.get(),
             "hotkey_stop": self.hotkey_stop.get(),
+            "hotkey_maximize": self.hotkey_maximize.get(),
         }
         CONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.config_data = data
@@ -261,7 +265,7 @@ class App(tk.Tk):
         dialog.grab_set()
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill="both", expand=True)
-        rows = (("\u70b9\u51fb\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.click_delay), ("\u6eda\u52a8\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.scroll_delay), ("\u6253\u5f00\u4f1a\u8bdd\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.chat_open_delay), ("\u6253\u5f00\u8d44\u6599\u5361\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.profile_delay), ("\u8fd4\u56de/\u5bfc\u822a\u7b49\u5f85\uff08\u79d2\uff09", self.navigation_delay), ("\u8bbe\u7f6e\u9762\u677f\u7b49\u5f85\uff08\u79d2\uff09", self.settings_delay), ("\u6700\u8fd1\u4f1a\u8bdd\u6eda\u52a8\u91cf", self.recent_scroll_delta), ("\u5355\u4e2a\u641c\u7d22\u8bcd\u8d85\u65f6\uff08\u79d2\uff09", self.member_term_timeout))
+        rows = (("\u70b9\u51fb\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.click_delay), ("\u6eda\u52a8\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.scroll_delay), ("\u6253\u5f00\u4f1a\u8bdd\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.chat_open_delay), ("\u6253\u5f00\u8d44\u6599\u5361\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.profile_delay), ("\u8fd4\u56de/\u5bfc\u822a\u7b49\u5f85\uff08\u79d2\uff09", self.navigation_delay), ("\u8bbe\u7f6e\u9762\u677f\u7b49\u5f85\uff08\u79d2\uff09", self.settings_delay), ("\u6700\u8fd1\u4f1a\u8bdd\u6eda\u52a8\u91cf", self.recent_scroll_delta), ("\u7fa4\u6210\u5458\u6eda\u52a8\u8ddd\u79bb", self.member_scroll_delta), ("\u5355\u4e2a\u641c\u7d22\u8bcd\u8d85\u65f6\uff08\u79d2\uff09", self.member_term_timeout))
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
@@ -282,7 +286,7 @@ class App(tk.Tk):
         fold_row = policy_row + 1
         ttk.Checkbutton(body, text="\u5904\u7406\u6298\u53e0\u7684\u804a\u5929\uff08\u5176\u4e2d\u901a\u5e38\u662f\u7fa4\uff09", variable=self.task_folded_groups).grid(row=fold_row, column=0, columnspan=3, sticky="w", pady=4)
         ttk.Checkbutton(body, text="\u5f00\u59cb\u540e\u6700\u5c0f\u5316\u5de5\u5177\u7a97\u53e3", variable=self.minimize_after_start).grid(row=fold_row + 1, column=0, columnspan=3, sticky="w", pady=4)
-        hotkeys = (("\u542f\u52a8\u5feb\u6377\u952e", self.hotkey_start), ("\u6682\u505c\u5feb\u6377\u952e", self.hotkey_pause), ("\u505c\u6b62\u5feb\u6377\u952e", self.hotkey_stop))
+        hotkeys = (("\u542f\u52a8\u5feb\u6377\u952e", self.hotkey_start), ("\u6682\u505c\u5feb\u6377\u952e", self.hotkey_pause), ("\u505c\u6b62\u5feb\u6377\u952e", self.hotkey_stop), ("\u6700\u5927\u5316\u5feb\u6377\u952e", self.hotkey_maximize))
         hotkey_start = fold_row + 2
         for row, (label, variable) in enumerate(hotkeys, hotkey_start):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
@@ -317,6 +321,7 @@ class App(tk.Tk):
                 (2, self.hotkey_pause.get(), "hotkey_pause"),
                 (3, self.hotkey_stop.get(), "hotkey_stop"),
                 (4, "Ctrl+Alt+J", "hotkey_skip"),
+                (5, self.hotkey_maximize.get(), "hotkey_maximize"),
             )
             # RegisterHotKey can silently fail when an older GUI instance or
             # another utility already owns the combination. Use it only as a
@@ -574,7 +579,9 @@ class App(tk.Tk):
             "WECHAT_NAVIGATION_DELAY": str(self.navigation_delay.get()),
             "WECHAT_SETTINGS_DELAY": str(self.settings_delay.get()),
             "WECHAT_RECENT_SCROLL_DELTA": str(self.recent_scroll_delta.get()),
+            "WECHAT_MEMBER_SCROLL_DELTA": str(self.member_scroll_delta.get()),
             "WECHAT_MEMBER_TERM_TIMEOUT": str(self.member_term_timeout.get()),
+            "WECHAT_CONFIG_FILE": str(CONFIG),
             "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
             "WECHAT_FOLDED_GROUPS": "1" if self.task_folded_groups.get() else "0",
@@ -661,6 +668,12 @@ class App(tk.Tk):
                     self.stop_backup()
                 elif kind == "hotkey_skip":
                     self.skip_current()
+                elif kind == "hotkey_maximize":
+                    self.deiconify()
+                    self.state("normal")
+                    self.lift()
+                    self.attributes("-topmost", True)
+                    self.after(150, lambda: self.attributes("-topmost", False))
         except queue.Empty:
             pass
         self.after(150, self._poll)
