@@ -110,6 +110,7 @@ def save_recent_mixed(
     seen_people: set[str] = set()
     seen_groups: set[str] = set()
     preexisting_auxiliary_windows = wx.wechat_auxiliary_windows()
+    include_folded = include_folded and os.environ.get("WECHAT_FOLDED_GROUPS", "1").lower() not in {"0", "false", "no", "off"}
 
     def return_to_list(*, profile_open: bool = False) -> None:
         wx.close_wechat_auxiliary_windows(
@@ -134,9 +135,25 @@ def save_recent_mixed(
     activation = audit.activate_window(window)
     if activation["activated"]:
         window = activation["window"]
+    current_folded = False
     if not start_current_list:
+        current_probe = directory / ".current-chat-scope.png"
+        current_image, _ = wx.capture_live_window(window, current_probe)
+        current_lines = open_group.run_ocr(
+            tesseract, current_probe, psm=11, language="chi_sim+eng"
+        )
+        current_folded = any(
+            marker in open_group.normalize_text(line.text)
+            for line in current_lines
+            for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
+        )
+        current_probe.unlink(missing_ok=True)
+    if not start_current_list and not current_folded:
         open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
         time.sleep(wx.NAVIGATION_WAIT_SECONDS)
+    if current_folded:
+        start_current_list = True
+        include_folded = False
     wx.scroll_list_to_top(window)
     stop_reason = "maximum_pages"
     for page_index in range(wx.MAX_PAGES):

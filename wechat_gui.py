@@ -121,6 +121,7 @@ class App(tk.Tk):
         self.task_recent_groups = tk.BooleanVar(value=bool(self.config_data.get("task_recent_groups", True)))
         self.task_contacts = tk.BooleanVar(value=bool(self.config_data.get("task_contacts", True)))
         self.task_saved_groups = tk.BooleanVar(value=bool(self.config_data.get("task_saved_groups", False)))
+        self.task_folded_groups = tk.BooleanVar(value=bool(self.config_data.get("task_folded_groups", True)))
         self.group_filters = tk.StringVar(value=str(self.config_data.get("group_filters", "")))
         self.member_terms = tk.StringVar(value=str(self.config_data.get("member_terms", "1,a-z")))
         saved_mode = str(self.config_data.get("member_mode", "auto"))
@@ -218,6 +219,7 @@ class App(tk.Tk):
             "task_recent_groups": self.task_recent_groups.get(),
             "task_contacts": self.task_contacts.get(),
             "task_saved_groups": self.task_saved_groups.get(),
+            "task_folded_groups": self.task_folded_groups.get(),
             "group_filters": self.group_filters.get().strip(),
             "member_terms": self.member_terms.get().strip(),
             "member_mode": MODE_VALUES.get(self.member_mode.get(), "auto"),
@@ -259,12 +261,13 @@ class App(tk.Tk):
         ttk.Label(body, text="群成员失败策略").grid(row=8, column=0, sticky="w", pady=4)
         ttk.Combobox(body, textvariable=self.group_error_policy, values=("skip", "stop"), state="readonly", width=10).grid(row=8, column=1, sticky="w", padx=10, pady=4)
         ttk.Label(body, text="跳过该群继续 / 遇错停止").grid(row=8, column=2, sticky="w")
+        ttk.Checkbutton(body, text="处理折叠的聊天（其中通常是群）", variable=self.task_folded_groups).grid(row=9, column=0, columnspan=3, sticky="w", pady=4)
         hotkeys = (("启动快捷键", self.hotkey_start), ("暂停快捷键", self.hotkey_pause), ("停止快捷键", self.hotkey_stop))
-        for row, (label, variable) in enumerate(hotkeys, 9):
+        for row, (label, variable) in enumerate(hotkeys, 10):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             ttk.Entry(body, textvariable=variable, width=18).grid(row=row, column=1, padx=10, pady=4)
         buttons = ttk.Frame(body)
-        buttons.grid(row=12, column=0, columnspan=3, pady=(12, 0), sticky="e")
+        buttons.grid(row=13, column=0, columnspan=3, pady=(12, 0), sticky="e")
         ttk.Button(buttons, text="保存并关闭", command=lambda: (self.save_config(), self._restart_hotkeys(), dialog.destroy())).pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
 
@@ -489,6 +492,7 @@ class App(tk.Tk):
             "WECHAT_PROFILE_DELAY": str(self.profile_delay.get()),
             "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
+            "WECHAT_FOLDED_GROUPS": "1" if self.task_folded_groups.get() else "0",
         })
         self.status_var.set("正在执行选中任务...")
         self.backup_running = True
