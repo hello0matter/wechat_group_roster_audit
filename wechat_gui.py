@@ -109,6 +109,7 @@ class App(tk.Tk):
         self.backup_running = False
         self.backup_paused = False
         self.run_generation = 0
+        self.last_hotkey_at: dict[str, float] = {}
         self.hotkey_thread_id = 0
         self.hotkey_shutdown = threading.Event()
         bundled_root = ROOT / "pywechat2"
@@ -389,7 +390,7 @@ class App(tk.Tk):
         self._start_hotkeys()
 
     def toggle_pause(self) -> None:
-        if not self.backup_running or not self.active_processes:
+        if not self.backup_running:
             return
         if self.backup_paused:
             self.pause_file.unlink(missing_ok=True)
@@ -638,6 +639,12 @@ class App(tk.Tk):
         try:
             while True:
                 kind, value = self.events.get_nowait()
+                if kind.startswith("hotkey_"):
+                    now = time.monotonic()
+                    previous = self.last_hotkey_at.get(kind, 0.0)
+                    if now - previous < 0.35:
+                        continue
+                    self.last_hotkey_at[kind] = now
                 if kind == "versions":
                     self.version_combo["values"] = value
                     if value and not self.version_var.get():
@@ -659,12 +666,14 @@ class App(tk.Tk):
                     self.stop_button.state(["disabled"])
                     self.pause_button.configure(text="暂停")
                 elif kind == "hotkey_start":
-                    if self.backup_paused:
+                    if self.backup_running and (self.backup_paused or self.pause_file.exists()):
+                        self.backup_paused = True
                         self.toggle_pause()
                     elif not self.backup_running:
+                        self.pause_file.unlink(missing_ok=True)
                         self.run_selected()
                     else:
-                        self.log_text("任务正在运行，启动快捷键不会创建第二个任务。")
+                        self.log_text("??????????????????????")
                 elif kind == "hotkey_pause":
                     self.toggle_pause()
                 elif kind == "hotkey_stop":
