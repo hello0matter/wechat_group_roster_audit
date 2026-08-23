@@ -331,8 +331,12 @@ class App(tk.Tk):
         self.status_var.set("已停止")
 
     def skip_current(self) -> None:
-        self.skip_file.write_text("skip\n", encoding="ascii")
-        self.log_text("已请求跳过当前群/联系人")
+        try:
+            count = int(self.skip_file.read_text(encoding="ascii").strip() or "0")
+        except (OSError, ValueError):
+            count = 0
+        self.skip_file.write_text(str(count + 1), encoding="ascii")
+        self.log_text(f"已请求跳过 {count + 1} 个群/联系人")
 
     def _kill_process_tree(self, process: subprocess.Popen[str]) -> None:
         if process.poll() is None:

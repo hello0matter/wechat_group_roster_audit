@@ -87,13 +87,17 @@ def emit_result(directory: Path, payload: dict[str, object]) -> None:
 
 
 def consume_skip_request() -> bool:
-    """Consume the GUI skip marker once and return whether one was requested."""
+    """Consume one queued GUI skip request."""
     marker = Path(os.environ.get("WECHAT_SKIP_FILE", "skip.request"))
     if not marker.exists():
         return False
     try:
-        marker.unlink()
-    except OSError:
+        count = int(marker.read_text(encoding="ascii").strip() or "1")
+        if count <= 1:
+            marker.unlink()
+        else:
+            marker.write_text(str(count - 1), encoding="ascii")
+    except (OSError, ValueError):
         return False
     return True
 
