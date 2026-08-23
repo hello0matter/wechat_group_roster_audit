@@ -26,6 +26,11 @@ HELP_FILE = ROOT / "说明.txt"
 DEFAULT_PYWECHAT = Path(r"D:\tmp\anjian\pj\st\tmp\pywechat2")
 MODE_LABELS = {"auto": "自动", "list": "只截图", "detail": "打开详情"}
 MODE_VALUES = {label: value for value, label in MODE_LABELS.items()}
+HOTKEY_MIGRATIONS = {
+    "Ctrl+Shift+Q": "Ctrl+Alt+Q",
+    "Ctrl+Shift+E": "Ctrl+Alt+E",
+    "Ctrl+Shift+S": "Ctrl+Alt+S",
+}
 
 
 HELP_TEXT = """微信可见界面备份 - 使用说明
@@ -53,6 +58,7 @@ HELP_TEXT = """微信可见界面备份 - 使用说明
 
 五、暂停和停止
 可使用界面按钮，或在“全局设置”中修改快捷键。保存配置后下一次运行生效。
+默认启动 Ctrl+Alt+Q，暂停 Ctrl+Alt+E，停止 Ctrl+Alt+S。
 
 六、故障排查
 如果微信白屏，先手动点击微信窗口一次，等待重绘后再运行。
@@ -127,9 +133,9 @@ class App(tk.Tk):
         self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.30)))
         self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))
         self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
-        self.hotkey_start = tk.StringVar(value=str(self.config_data.get("hotkey_start", "Ctrl+Shift+Q")))
-        self.hotkey_pause = tk.StringVar(value=str(self.config_data.get("hotkey_pause", "Ctrl+Shift+E")))
-        self.hotkey_stop = tk.StringVar(value=str(self.config_data.get("hotkey_stop", "Ctrl+Shift+S")))
+        self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
+        self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
+        self.hotkey_stop = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S")), str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S"))))
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.close_app)
         self._start_hotkeys()

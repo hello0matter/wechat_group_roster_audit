@@ -42,6 +42,43 @@ def safe_group_directory(base: Path, index: int, title: str | None) -> Path:
     return base / f"group-{index:03d}-{label[:40] or 'group'}"
 
 
+def enter_folded_chats(
+    window: dict[str, object], directory: Path, tesseract: Path
+) -> bool:
+    """Enter Weixin's folded/minimized chat list from the recent list."""
+    open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
+    time.sleep(wx.NAVIGATION_WAIT_SECONDS)
+    wx.scroll_list_to_top(window)
+    probe = directory / ".folded-chats-entry.png"
+    image, _ = wx.capture_live_window(window, probe)
+    lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
+    entry = next(
+        (
+            line
+            for line in wx.left_pane_lines(lines, image)
+            if any(
+                marker in open_group.normalize_text(line.text)
+                for marker in ("折叠的聊天", "折叠的群聊", "minimizedgroups")
+            )
+        ),
+        None,
+    )
+    if entry is None:
+        probe.unlink(missing_ok=True)
+        return False
+    open_group.click_screen_point(
+        wx.screen_point_from_capture(
+            window,
+            image,
+            (entry.left + entry.right) // 2,
+            (entry.top + entry.bottom) // 2,
+        )
+    )
+    time.sleep(wx.NAVIGATION_WAIT_SECONDS)
+    probe.unlink(missing_ok=True)
+    return True
+
+
 def save_recent_mixed(
     window: dict[str, object],
     directory: Path,
@@ -55,6 +92,8 @@ def save_recent_mixed(
     member_terms: tuple[str, ...],
     member_mode: str,
     member_pages: int,
+    start_current_list: bool = False,
+    include_folded: bool = True,
 ) -> dict[str, object]:
     """Scan the recent list once and dispatch each row by chat settings layout."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -83,8 +122,9 @@ def save_recent_mixed(
     activation = audit.activate_window(window)
     if activation["activated"]:
         window = activation["window"]
-    open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
-    time.sleep(wx.NAVIGATION_WAIT_SECONDS)
+    if not start_current_list:
+        open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
+        time.sleep(wx.NAVIGATION_WAIT_SECONDS)
     wx.scroll_list_to_top(window)
     stop_reason = "maximum_pages"
     for page_index in range(wx.MAX_PAGES):
@@ -207,10 +247,35 @@ def save_recent_mixed(
         if not wx.page_changed(before, after):
             stop_reason = "scrollbar_bottom"
             break
-    return {
+    result = {
         "ok": bool(people or groups),
         "people": people,
         "groups": groups,
         "stop_reason": stop_reason,
         "pages_scanned": page_index + 1,
     }
+    if (
+        include_folded
+        and include_groups
+        and len(groups) < group_limit
+        and enter_folded_chats(window, directory, tesseract)
+    ):
+        folded = save_recent_mixed(
+            window,
+            directory / "folded",
+            tesseract,
+            include_people=False,
+            include_groups=True,
+            people_limit=0,
+            group_limit=group_limit - len(groups),
+            group_keywords=group_keywords,
+            member_terms=member_terms,
+            member_mode=member_mode,
+            member_pages=member_pages,
+            start_current_list=True,
+            include_folded=False,
+        )
+        result["groups"].extend(folded["groups"])
+        result["ok"] = bool(result["people"] or result["groups"])
+        result["folded"] = folded
+    return result
