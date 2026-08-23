@@ -26,6 +26,7 @@ SEARCH_FIELD = (0.205, 0.07)
 LIST_SCROLL_POINT = (0.25, 0.72)
 LEFT_PANE = (0.065, 0.035, 0.36, 0.96)
 LIST_SCROLL_DELTA = -12000
+RECENT_SCROLL_DELTA = -120
 LIST_TOP_SCROLL_DELTA = 12000
 LIST_TOP_SCROLL_STEPS = 3
 LIST_SCROLL_SETTLE_SECONDS = 0.25
@@ -468,6 +469,15 @@ def click_result_and_verify_chat(
 def scroll_list(window: dict[str, object], delta: int = LIST_SCROLL_DELTA) -> None:
     open_group.scroll_screen_point(point_in_window(window, LIST_SCROLL_POINT), delta)
     time.sleep(LIST_SCROLL_SETTLE_SECONDS)
+
+
+def recent_scroll_delta() -> int:
+    """Return the conservative one-row wheel step used by recent scans."""
+    try:
+        value = int(os.environ.get("WECHAT_RECENT_SCROLL_DELTA", str(RECENT_SCROLL_DELTA)))
+    except ValueError:
+        value = RECENT_SCROLL_DELTA
+    return -max(1, abs(value))
 
 
 def scroll_list_to_top(window: dict[str, object]) -> None:

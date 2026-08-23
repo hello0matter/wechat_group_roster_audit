@@ -88,6 +88,13 @@ def safe_group_directory(base: Path, index: int, title: str | None) -> Path:
     return base / f"group-{index:03d}-{label[:40] or 'group'}"
 
 
+def save_audit_frame(directory: Path, step: int, stage: str, image: Image.Image) -> None:
+    """Persist each recent-list transition for coordinate and skip auditing."""
+    audit_dir = directory / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    image.save(audit_dir / f"step-{step:04d}-{stage}.png")
+
+
 def enter_folded_chats(
     window: dict[str, object], directory: Path, tesseract: Path
 ) -> bool:
@@ -291,7 +298,8 @@ def save_recent_mixed(
             frame.replace(directory / "recent-mixed-not-detected.png")
             stop_reason = "recent_chats_not_detected"
             break
-        for row in rows:
+        row = max(rows, key=lambda candidate: candidate.bottom)
+        for row in (row,):
             if wx.consume_skip_request():
                 continue
             if not start_current_list and row_is_draft(
@@ -320,6 +328,7 @@ def save_recent_mixed(
                     "pages_scanned": page_index + 1,
                 }
             window = audit.select_weixin_window(int(window["pid"])) or window
+            save_audit_frame(directory, page_index + 1, "before-click", list_image)
             open_group.click_screen_point(
                 wx.screen_point_from_capture(
                     window,
@@ -331,6 +340,7 @@ def save_recent_mixed(
             time.sleep(wx.chat_open_delay())
             opened_probe = directory / ".recent-opened-probe.png"
             opened_image, _ = wx.capture_live_window(window, opened_probe)
+            save_audit_frame(directory, page_index + 1, "after-click", opened_image)
             if start_current_list and not chat_surface_ready(opened_image):
                 opened_probe.unlink(missing_ok=True)
                 return_to_list()
@@ -420,9 +430,14 @@ def save_recent_mixed(
 
         before, _ = wx.crop_left_pane(list_image)
         frame.unlink(missing_ok=True)
-        wx.scroll_list(window)
+        returned_path = directory / ".recent-mixed-returned.png"
+        returned_image, _ = wx.capture_live_window(window, returned_path)
+        save_audit_frame(directory, page_index + 1, "after-return", returned_image)
+        returned_path.unlink(missing_ok=True)
+        wx.scroll_list(window, delta=wx.recent_scroll_delta())
         after_path = directory / ".recent-mixed-after.png"
         after_full, _ = wx.capture_live_window(window, after_path)
+        save_audit_frame(directory, page_index + 1, "after-scroll", after_full)
         after_path.unlink(missing_ok=True)
         after, _ = wx.crop_left_pane(after_full)
         if not wx.page_changed(before, after):
