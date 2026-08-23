@@ -8,7 +8,7 @@ import json
 import time
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 from PIL import ImageStat
 
 import group_member_backup
@@ -203,6 +203,24 @@ def save_audit_event(directory: Path, event: dict[str, object]) -> None:
     audit_dir.mkdir(parents=True, exist_ok=True)
     with (audit_dir / "events.jsonl").open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def mark_click_on_frame(
+    directory: Path, step: int, stage: str, image: Image.Image, click_xy: tuple[int, int]
+) -> str:
+    """Save a copy of image with a red crosshair at click_xy; return the filename."""
+    marked = image.copy()
+    draw = ImageDraw.Draw(marked)
+    x, y = click_xy
+    r = 18
+    draw.ellipse([x - r, y - r, x + r, y + r], outline=(255, 0, 0), width=3)
+    draw.line([x - r * 2, y, x + r * 2, y], fill=(255, 0, 0), width=2)
+    draw.line([x, y - r * 2, x, y + r * 2], fill=(255, 0, 0), width=2)
+    filename = f"step-{step:04d}-{stage}-marked.png"
+    audit_dir = directory / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    marked.save(audit_dir / filename)
+    return filename
 
 
 def row_audit(row: open_group.OcrLine) -> dict[str, object]:
@@ -455,6 +473,9 @@ def save_recent_mixed(
             click_screen = wx.screen_point_from_capture(
                 window, list_image, *click_capture
             )
+            marked_filename = mark_click_on_frame(
+                directory, page_index + 1, "before-click", list_image, click_capture
+            )
             save_audit_event(
                 directory,
                 {
@@ -462,6 +483,7 @@ def save_recent_mixed(
                     "stage": "before-click",
                     "scope": "folded" if start_current_list else "recent",
                     "image": "before-click",
+                    "click_marked_image": marked_filename,
                     "image_size": list_image.size,
                     "row": row_audit(row),
                     "visible_rows": [row_audit(candidate) for candidate in rows],
