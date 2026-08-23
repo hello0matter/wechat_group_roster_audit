@@ -643,7 +643,7 @@ def recent_conversation_rows(image: Image.Image) -> list[open_group.OcrLine]:
     """Locate visible conversation rows by their avatars in visual order."""
     # Include the unread badge to the upper-left of the avatar. Without this
     # margin a red badge can split the avatar texture run and hide the row.
-    left, right = round(image.width * 0.075), round(image.width * 0.20)
+    left, right = round(image.width * 0.10), round(image.width * 0.24)
     variation = [
         sum(ImageStat.Stat(image.crop((left, y, right, y + 1)).convert("RGB")).stddev)
         for y in range(image.height)

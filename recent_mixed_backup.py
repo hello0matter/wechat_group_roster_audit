@@ -443,11 +443,10 @@ def save_recent_mixed(
             list_image, _ = wx.capture_live_window(window, frame)
             rows = wx.folded_conversation_rows(list_image)
         if not rows:
-            # A visible Weixin window can still be on the chat surface after
-            # activation (especially when the previous group left its
-            # settings pane open). Recover the list before declaring the
-            # recent-chat task dead. Do not click arbitrary rows while the
-            # list has not been verified.
+            # Do not click the sidebar again merely because the visual row
+            # detector missed one frame. The list may already be visible;
+            # repeated navigation clicks are what caused extra clicks in the
+            # conversation area. Re-capture only, then stop with evidence.
             recovered = False
             for retry_index in range(1, 4):
                 save_audit_frame(
@@ -456,11 +455,9 @@ def save_recent_mixed(
                     f"list-retry-{retry_index}-before",
                     list_image,
                 )
-                current = audit.select_weixin_window(int(window["pid"])) or window
-                open_group.click_screen_point(wx.sidebar_point(current, wx.CHAT_NAV))
                 time.sleep(wx.navigation_delay())
                 retry_path = directory / f".recent-list-retry-{retry_index}.png"
-                retry_image, _ = wx.capture_live_window(current, retry_path)
+                retry_image, _ = wx.capture_live_window(window, retry_path)
                 retry_rows = (
                     wx.folded_conversation_rows(retry_image)
                     if start_current_list
