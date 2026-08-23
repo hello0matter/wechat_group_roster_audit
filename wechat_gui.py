@@ -108,6 +108,7 @@ class App(tk.Tk):
         self.active_processes: set[subprocess.Popen[str]] = set()
         self.backup_running = False
         self.backup_paused = False
+        self.run_generation = 0
         self.hotkey_thread_id = 0
         self.hotkey_shutdown = threading.Event()
         bundled_root = ROOT / "pywechat2"
