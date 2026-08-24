@@ -6,6 +6,8 @@ import http.client
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+import requests
+
 from incremental_backup import IncrementalArtifactUploader
 
 
@@ -33,17 +35,36 @@ class IncrementalWebDavUploader(IncrementalArtifactUploader):
             return
         super().start()
 
+    def _remote_url(self, remote: str = "") -> str:
+        base = self.url.rstrip("/")
+        if not remote:
+            return base + "/"
+        encoded = "/".join(
+            quote(part, safe="") for part in remote.strip("/").split("/") if part
+        )
+        return f"{base}/{encoded}"
+
+    def _auth(self) -> tuple[str, str] | None:
+        return (self.user, self.secret) if self.user else None
+
+    def _headers(self, size: int | None = None) -> dict[str, str]:
+        headers = {"User-Agent": "WechatRosterGUI/1.0"}
+        if size is not None:
+            headers["Content-Length"] = str(size)
+        if not self.user and self.secret:
+            headers["Authorization"] = f"Bearer {self.secret}"
+        return headers
+
     def test_connection(self) -> None:
-        conn, base = self._parts()
-        path = base or "/"
-        try:
-            conn.request("PROPFIND", path, headers={**self._headers(), "Depth": "0"})
-            response = conn.getresponse()
-            response.read()
-            if response.status not in {200, 207}:
-                raise RuntimeError(f"HTTP {response.status} {response.reason}")
-        finally:
-            conn.close()
+        response = requests.request(
+            "PROPFIND",
+            self._remote_url(),
+            headers={**self._headers(), "Depth": "0"},
+            auth=self._auth(),
+            timeout=30,
+        )
+        if response.status_code not in {200, 207}:
+            raise RuntimeError(f"HTTP {response.status_code} {response.reason}")
 
     def _parts(self):
         parsed = urlparse(self.url)
@@ -64,20 +85,16 @@ class IncrementalWebDavUploader(IncrementalArtifactUploader):
         return headers
 
     def _request(self, method: str, remote: str, *, body=None, size: int | None = None) -> None:
-        conn, base = self._parts()
-        path = "/" + "/".join(
-            quote(part, safe="")
-            for part in (base.strip("/") + "/" + remote.strip("/")).split("/")
-            if part
+        response = requests.request(
+            method,
+            self._remote_url(remote),
+            data=body,
+            headers=self._headers(size),
+            auth=self._auth(),
+            timeout=90,
         )
-        try:
-            conn.request(method, path, body=body, headers=self._headers(size))
-            response = conn.getresponse()
-            response.read()
-            if response.status not in {200, 201, 204, 207, 405, 409}:
-                raise RuntimeError(f"HTTP {response.status} {response.reason}")
-        finally:
-            conn.close()
+        if response.status_code not in {200, 201, 204, 207, 405, 409}:
+            raise RuntimeError(f"HTTP {response.status_code} {response.reason}")
 
     def _ensure_folder(self, rel: str) -> None:
         self._request("MKCOL", rel or self.remote_folder)
@@ -89,24 +106,14 @@ class IncrementalWebDavUploader(IncrementalArtifactUploader):
         parts = rel.split("/")
         for index in range(1, len(parts)):
             self._ensure_folder("/".join([self.remote_folder, *parts[:index]]))
-        conn, base = self._parts()
         remote = "/".join([self.remote_folder, rel])
-        target = "/" + "/".join(
-            quote(part, safe="")
-            for part in (base.strip("/") + "/" + remote).split("/")
-            if part
-        )
-        try:
-            conn.putrequest("PUT", target)
-            for key, value in self._headers(size).items():
-                conn.putheader(key, value)
-            conn.endheaders()
-            with path.open("rb") as stream:
-                while chunk := stream.read(1024 * 1024):
-                    conn.send(chunk)
-            response = conn.getresponse()
-            response.read()
-            if response.status not in {200, 201, 204}:
-                raise RuntimeError(f"HTTP {response.status} {response.reason}")
-        finally:
-            conn.close()
+        with path.open("rb") as stream:
+            response = requests.put(
+                self._remote_url(remote),
+                data=stream,
+                headers=self._headers(size),
+                auth=self._auth(),
+                timeout=300,
+            )
+        if response.status_code not in {200, 201, 204}:
+            raise RuntimeError(f"HTTP {response.status_code} {response.reason}")
