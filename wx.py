@@ -83,6 +83,14 @@ def chat_open_delay() -> float:
     return _env_delay("WECHAT_CHAT_OPEN_DELAY", CHAT_OPEN_WAIT_SECONDS, 0.1)
 
 
+def group_search_prefix() -> int:
+    try:
+        value = int(_setting_value("group_search_prefix", 4))
+    except (TypeError, ValueError):
+        value = 4
+    return max(0, min(value, 32))
+
+
 def profile_delay() -> float:
     return _env_delay("WECHAT_PROFILE_DELAY", 0.55, 0.05)
 

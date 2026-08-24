@@ -354,6 +354,8 @@ def open_named_group(
     window: dict[str, object], query: str, directory: Path, tesseract: Path
 ) -> dict[str, object]:
     """Open one group from global search without accepting non-group results."""
+    prefix_length = wx.group_search_prefix()
+    search_query = query[:prefix_length] if prefix_length and len(query) > prefix_length else query
     open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
     time.sleep(wx.NAVIGATION_WAIT_SECONDS)
     open_group.focus_global_search(window)
@@ -362,7 +364,7 @@ def open_named_group(
     if not weixin_has_keyboard_focus(hwnd):
         raise RuntimeError("global_search_not_focusable")
     open_group.select_all()
-    open_group.send_unicode_text(query)
+    open_group.send_unicode_text(search_query)
     time.sleep(wx.SEARCH_RESULT_WAIT_OCR_SECONDS)
     results_path = directory / ".group-search-results.png"
     image, _ = wx.capture_live_window(window, results_path)
@@ -384,14 +386,14 @@ def open_named_group(
     # Only accept an actual Weixin group result.  The global search overlay
     # also contains web/search-history entries; selecting those opens a
     # browser and loses the Weixin window.
-    match = wx.find_exact_result(lines, query, {"most_used", "groups"})
+    match = wx.find_exact_result(lines, search_query, {"most_used", "groups"})
     has_group_section = any(
         wx.section_kind(line.text) in {"most_used", "groups"} for line in lines
     )
     top_limit = round(enlarged.height * 0.22)
     used_top_fallback = False
     if match is None:
-        expected = wx.ocr_match_key(query)
+        expected = wx.ocr_match_key(search_query)
         match = next(
             (
                 line
@@ -425,7 +427,7 @@ def open_named_group(
     if used_top_fallback or containing_section == "most_used":
         selection_index = 0
     else:
-        expected = wx.ocr_match_key(query)
+        expected = wx.ocr_match_key(search_query)
         candidate_rows: list[int] = []
         for line in sorted(lines, key=lambda item: (item.top, item.left)):
             if line.top > match.top + 8 or expected not in wx.ocr_match_key(line.text):
