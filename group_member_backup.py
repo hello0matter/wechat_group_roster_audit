@@ -381,8 +381,12 @@ def open_named_group(
     crop_path = directory / ".group-search-results-enlarged.png"
     enlarged.save(crop_path)
     lines = open_group.run_ocr(tesseract, crop_path, psm=6, language="chi_sim+eng")
-    match = wx.find_exact_result(
-        lines, query, {"most_used", "groups", "chat_history"}
+    # Only accept an actual Weixin group result.  The global search overlay
+    # also contains web/search-history entries; selecting those opens a
+    # browser and loses the Weixin window.
+    match = wx.find_exact_result(lines, query, {"most_used", "groups"})
+    has_group_section = any(
+        wx.section_kind(line.text) in {"most_used", "groups"} for line in lines
     )
     top_limit = round(enlarged.height * 0.22)
     used_top_fallback = False
@@ -398,7 +402,7 @@ def open_named_group(
         )
         used_top_fallback = match is not None
     crop_path.unlink(missing_ok=True)
-    if match is None:
+    if match is None or not has_group_section:
         raise RuntimeError("group_not_found_in_group_results")
     headings = sorted(
         (
@@ -416,6 +420,8 @@ def open_named_group(
         ),
         None,
     )
+    if used_top_fallback and not has_group_section:
+        raise RuntimeError("group_not_found_in_group_results")
     if used_top_fallback or containing_section == "most_used":
         selection_index = 0
     else:
@@ -434,6 +440,37 @@ def open_named_group(
     time.sleep(wx.CHAT_OPEN_WAIT_SECONDS)
     opened_path = directory / "opened.png"
     wx.capture_live_window(window, opened_path)
+    # Global search may stop on a group preview instead of the conversation.
+    # Enter the chat before preparing the member search panel.
+    with Image.open(opened_path) as opened_image:
+        preview_state = wx.saved_group_preview_state(opened_image)
+        if preview_state == "join_group":
+            left = round(opened_image.width * wx.JOIN_BUTTON_REGION[0])
+            top = round(opened_image.height * wx.JOIN_BUTTON_REGION[1])
+            right = round(opened_image.width * wx.JOIN_BUTTON_REGION[2])
+            bottom = round(opened_image.height * wx.JOIN_BUTTON_REGION[3])
+            green_points = [
+                (x, y)
+                for y in range(top, bottom, 3)
+                for x in range(left, right, 3)
+                if (lambda rgb: rgb[0] < 90 and rgb[1] > 130 and rgb[2] < 150)(
+                    opened_image.getpixel((x, y))[:3]
+                )
+            ]
+            if green_points:
+                cx = sum(point[0] for point in green_points) // len(green_points)
+                cy = sum(point[1] for point in green_points) // len(green_points)
+            else:
+                cx = (left + right) // 2
+                cy = (top + bottom) // 2
+            # Use normalized coordinates from the actual capture.  The
+            # window rectangle may have changed while the preview opened.
+            point = wx.point_in_window(
+                window, (cx / opened_image.width, cy / opened_image.height)
+            )
+            open_group.click_screen_point(point)
+            time.sleep(wx.chat_open_delay())
+            wx.capture_live_window(window, opened_path)
     verified = wx.verify_opened_title(tesseract, opened_path, query)
     if not verified:
         opened_lines = open_group.run_ocr(
