@@ -444,11 +444,31 @@ def open_named_group(
     # Enter the chat before preparing the member search panel.
     with Image.open(opened_path) as opened_image:
         preview_state = wx.saved_group_preview_state(opened_image)
-        if preview_state == "join_group":
+        preview_lines = open_group.run_ocr(
+            tesseract, opened_path, psm=11, language="chi_sim+eng"
+        )
+        join_line = next(
+            (
+                line
+                for line in preview_lines
+                if "进入群聊" in open_group.normalize_text(line.text)
+            ),
+            None,
+        )
+        if join_line is not None or preview_state == "join_group":
             left = round(opened_image.width * wx.JOIN_BUTTON_REGION[0])
             top = round(opened_image.height * wx.JOIN_BUTTON_REGION[1])
             right = round(opened_image.width * wx.JOIN_BUTTON_REGION[2])
             bottom = round(opened_image.height * wx.JOIN_BUTTON_REGION[3])
+            join_point = None
+            if join_line is not None:
+                join_point = wx.point_in_window(
+                    window,
+                    (
+                        ((join_line.left + join_line.right) / 2) / opened_image.width,
+                        ((join_line.top + join_line.bottom) / 2) / opened_image.height,
+                    ),
+                )
             green_points = [
                 (x, y)
                 for y in range(top, bottom, 3)
@@ -465,7 +485,7 @@ def open_named_group(
                 cy = (top + bottom) // 2
             # Use normalized coordinates from the actual capture.  The
             # window rectangle may have changed while the preview opened.
-            point = wx.point_in_window(
+            point = join_point or wx.point_in_window(
                 window, (cx / opened_image.width, cy / opened_image.height)
             )
             open_group.click_screen_point(point)
