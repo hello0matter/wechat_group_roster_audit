@@ -1,4 +1,4 @@
-"""Store cloud credentials with Windows DPAPI instead of plaintext config."""
+﻿"""Store cloud credentials with Windows DPAPI instead of plaintext config."""
 from __future__ import annotations
 
 import base64
@@ -22,6 +22,22 @@ def load_secret(path: Path) -> dict[str, str]:
         return {str(k): str(v) for k, v in value.items()} if isinstance(value, dict) else {}
     except Exception:
         return {}
+
+
+def update_secret(path: Path, values: dict[str, str]) -> None:
+    current = load_secret(path)
+    current.update({key: value for key, value in values.items() if value})
+    save_secret(path, current)
+
+
+def delete_secret_keys(path: Path, *keys: str) -> None:
+    current = load_secret(path)
+    for key in keys:
+        current.pop(key, None)
+    if current:
+        save_secret(path, current)
+    else:
+        path.unlink(missing_ok=True)
 
 
 def delete_secret(path: Path) -> None:

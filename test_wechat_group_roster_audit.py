@@ -416,6 +416,19 @@ class OpenGroupTests(unittest.TestCase):
             [open_group.OcrLine("Group Chats", 10, 20, 90, 35)],
         )
 
+    def test_section_kind_accepts_chinese_group_and_contact_labels(self):
+        self.assertEqual(wx.section_kind("\u7fa4\u804a"), "groups")
+        self.assertEqual(wx.section_kind("\u8054\u7cfb\u4eba"), "contacts")
+        self.assertEqual(wx.section_kind("\u4fdd\u5b58\u7684\u7fa4\u804a"), "saved_groups")
+
+    def test_saved_group_bounds_accepts_new_chinese_group_heading(self):
+        lines = [
+            open_group.OcrLine("\u7fa4\u804a", 10, 20, 90, 40),
+            open_group.OcrLine("Example", 20, 60, 100, 80),
+            open_group.OcrLine("\u8054\u7cfb\u4eba", 10, 120, 90, 140),
+        ]
+        self.assertEqual(wx.saved_group_section_bounds(lines, False), (40, 120, False))
+
     def test_finds_exact_result_only_in_group_chats_section(self):
         lines = [
             open_group.OcrLine("Codex交流群2", 120, 70, 300, 90),

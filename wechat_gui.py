@@ -22,7 +22,8 @@ import psutil
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from secret_store import delete_secret, load_secret, save_secret
+from box_backup import BoxOAuthClient, IncrementalBoxUploader
+from secret_store import delete_secret_keys, load_secret, update_secret
 from stream_backup import IncrementalWebDavUploader
 
 
@@ -33,6 +34,9 @@ HELP_FILE = ROOT / "说明.txt"
 DEFAULT_PYWECHAT = Path(r"D:\tmp\anjian\pj\st\tmp\pywechat2")
 MODE_LABELS = {"auto": "自动", "list": "只截图", "detail": "打开详情"}
 MODE_VALUES = {label: value for value, label in MODE_LABELS.items()}
+CLOUD_TYPE_LABELS = {"none": "\u4e0d\u4e0a\u4f20", "webdav": "WebDAV", "box": "Box"}
+CLOUD_TYPE_VALUES = {label: value for value, label in CLOUD_TYPE_LABELS.items()}
+
 HOTKEY_MIGRATIONS = {
     "Ctrl+Shift+Q": "Ctrl+Alt+Q",
     "Ctrl+Shift+E": "Ctrl+Alt+E",
@@ -112,7 +116,7 @@ class App(tk.Tk):
         self.config_data = load_config()
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.active_processes: set[subprocess.Popen[str]] = set()
-        self.active_uploaders: set[IncrementalWebDavUploader] = set()
+        self.active_uploaders: set[object] = set()
         self.backup_running = False
         self.backup_paused = False
         self.run_generation = 0
@@ -151,12 +155,18 @@ class App(tk.Tk):
         self.member_scroll_delta = tk.IntVar(value=int(self.config_data.get("member_scroll_delta", 12000)))
         self.minimize_after_start = tk.BooleanVar(value=bool(self.config_data.get("minimize_after_start", True)))
         self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
-        self.cloud_enabled = tk.BooleanVar(value=bool(self.config_data.get("cloud_enabled", False)))
+        legacy_cloud_enabled = bool(self.config_data.get("cloud_enabled", False))
+        saved_cloud_type = str(self.config_data.get("cloud_type", "webdav" if legacy_cloud_enabled else "none"))
+        self.cloud_type = tk.StringVar(value=CLOUD_TYPE_LABELS.get(saved_cloud_type, "\u4e0d\u4e0a\u4f20"))
         self.cloud_remark = tk.StringVar(value=str(self.config_data.get("cloud_remark", "\u5fae\u4fe1\u5907\u4efd")))
         self.cloud_url = tk.StringVar(value=str(self.config_data.get("cloud_url", "")))
         self.cloud_user = tk.StringVar(value=str(self.config_data.get("cloud_user", "")))
         self.cloud_secret = tk.StringVar(value="")
         self.cloud_interval = tk.DoubleVar(value=float(self.config_data.get("cloud_interval", 1.0)))
+        self.box_client_id = tk.StringVar(value=str(self.config_data.get("box_client_id", "")))
+        self.box_client_secret = tk.StringVar(value="")
+        self.box_redirect_uri = tk.StringVar(value=str(self.config_data.get("box_redirect_uri", "http://127.0.0.1:53682/callback")))
+        self.box_target_folder = tk.StringVar(value=str(self.config_data.get("box_target_folder", "WechatRosterBackup")))
         self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
         self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
         self.hotkey_stop = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S")), str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S"))))
@@ -266,11 +276,15 @@ class App(tk.Tk):
             "member_scroll_delta": self.member_scroll_delta.get(),
             "minimize_after_start": self.minimize_after_start.get(),
             "group_error_policy": self.group_error_policy.get(),
-            "cloud_enabled": self.cloud_enabled.get(),
+            "cloud_type": CLOUD_TYPE_VALUES.get(self.cloud_type.get(), "none"),
+            "cloud_enabled": CLOUD_TYPE_VALUES.get(self.cloud_type.get(), "none") != "none",
             "cloud_remark": self.cloud_remark.get().strip(),
             "cloud_url": self.cloud_url.get().strip(),
             "cloud_user": self.cloud_user.get().strip(),
             "cloud_interval": self.cloud_interval.get(),
+            "box_client_id": self.box_client_id.get().strip(),
+            "box_redirect_uri": self.box_redirect_uri.get().strip(),
+            "box_target_folder": self.box_target_folder.get().strip(),
             "hotkey_start": self.hotkey_start.get(),
             "hotkey_pause": self.hotkey_pause.get(),
             "hotkey_stop": self.hotkey_stop.get(),
@@ -278,11 +292,17 @@ class App(tk.Tk):
             "hotkey_minimize": self.hotkey_minimize.get(),
         }
         CONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        credentials: dict[str, str] = {}
         if self.cloud_secret.get():
-            save_secret(CLOUD_CREDENTIALS, {"secret": self.cloud_secret.get()})
+            credentials["webdav_secret"] = self.cloud_secret.get()
             self.cloud_secret.set("")
+        if self.box_client_secret.get():
+            credentials["box_client_secret"] = self.box_client_secret.get()
+            self.box_client_secret.set("")
+        if credentials:
+            update_secret(CLOUD_CREDENTIALS, credentials)
         self.config_data = data
-        self.log_text("全局配置已保存")
+        self.log_text("\u5168\u5c40\u914d\u7f6e\u5df2\u4fdd\u5b58")
 
     def open_global_settings(self) -> None:
         dialog = tk.Toplevel(self)
@@ -330,41 +350,155 @@ class App(tk.Tk):
         dialog.grab_set()
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill="both", expand=True)
-        ttk.Checkbutton(body, text="\u542f\u7528\u4efb\u52a1\u751f\u6210\u540e\u7acb\u5373\u4e0a\u4f20", variable=self.cloud_enabled).grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
-        fields = (
-            ("\u4efb\u52a1\u5907\u6ce8", self.cloud_remark, False),
+
+        ttk.Label(body, text="\u4e91\u7c7b\u578b").grid(row=0, column=0, sticky="w", pady=4)
+        cloud_combo = ttk.Combobox(
+            body,
+            textvariable=self.cloud_type,
+            values=tuple(CLOUD_TYPE_LABELS.values()),
+            state="readonly",
+            width=18,
+        )
+        cloud_combo.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=4)
+        ttk.Label(body, text="\u4efb\u52a1\u5907\u6ce8").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(body, textvariable=self.cloud_remark, width=48).grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=4)
+        ttk.Label(body, text="\u626b\u63cf\u95f4\u9694\uff08\u79d2\uff09").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(body, textvariable=self.cloud_interval, width=12).grid(row=2, column=1, sticky="w", padx=(10, 0), pady=4)
+
+        provider = ttk.Frame(body)
+        provider.grid(row=3, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        webdav_frame = ttk.LabelFrame(provider, text="WebDAV", padding=10)
+        box_frame = ttk.LabelFrame(provider, text="Box API", padding=10)
+
+        webdav_fields = (
             ("WebDAV \u6839\u5730\u5740", self.cloud_url, False),
             ("\u7528\u6237\u540d", self.cloud_user, False),
             ("\u5bc6\u7801 / Token", self.cloud_secret, True),
-            ("\u626b\u63cf\u95f4\u9694\uff08\u79d2\uff09", self.cloud_interval, False),
         )
-        for row, (label, variable, secret) in enumerate(fields, 1):
-            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
-            ttk.Entry(body, textvariable=variable, width=48, show="*" if secret else "").grid(row=row, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=4)
-        ttk.Label(body, text="\u8fdc\u7a0b\u76ee\u5f55\uff1a\u5907\u6ce8-\u65f6\u95f4-\u552f\u4e00\u540e\u7f00\uff1b\u6587\u4ef6\u7a33\u5b9a\u540e\u7acb\u5373\u6d41\u5f0f\u4e0a\u4f20\u3002", foreground="#555555").grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 4))
+        for row, (label, variable, secret) in enumerate(webdav_fields):
+            ttk.Label(webdav_frame, text=label).grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Entry(webdav_frame, textvariable=variable, width=48, show="*" if secret else "").grid(row=row, column=1, sticky="ew", padx=(10, 0), pady=4)
+        webdav_frame.columnconfigure(1, weight=1)
+
+        box_fields = (
+            ("Client ID", self.box_client_id, False),
+            ("Client Secret", self.box_client_secret, True),
+            ("\u56de\u8c03\u5730\u5740", self.box_redirect_uri, False),
+            ("Box \u76ee\u6807\u76ee\u5f55", self.box_target_folder, False),
+        )
+        for row, (label, variable, secret) in enumerate(box_fields):
+            ttk.Label(box_frame, text=label).grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Entry(box_frame, textvariable=variable, width=48, show="*" if secret else "").grid(row=row, column=1, sticky="ew", padx=(10, 0), pady=4)
+        ttk.Label(
+            box_frame,
+            text="\u540c\u4e00\u4e2a Box \u5e94\u7528\u53ef\u5728\u591a\u53f0\u7535\u8111\u4f7f\u7528\uff1b\u6bcf\u53f0\u7535\u8111\u9996\u6b21\u5fc5\u987b\u5206\u522b\u6d4f\u89c8\u5668\u6388\u6743\u3002",
+            foreground="#555555",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        box_buttons = ttk.Frame(box_frame)
+        box_buttons.grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(box_buttons, text="\u767b\u5f55 Box", command=self.login_box).pack(side="left")
+        ttk.Button(box_buttons, text="\u5220\u9664 Box \u767b\u5f55", command=self.clear_box_login).pack(side="left", padx=8)
+        box_frame.columnconfigure(1, weight=1)
+
+        def refresh_provider(*_args: object) -> None:
+            webdav_frame.pack_forget()
+            box_frame.pack_forget()
+            selected = CLOUD_TYPE_VALUES.get(self.cloud_type.get(), "none")
+            if selected == "webdav":
+                webdav_frame.pack(fill="x")
+            elif selected == "box":
+                box_frame.pack(fill="x")
+
+        cloud_combo.bind("<<ComboboxSelected>>", refresh_provider)
+        refresh_provider()
+        ttk.Label(
+            body,
+            text="\u6bcf\u8f6e\u4efb\u52a1\u521b\u5efa\u72ec\u7acb\u76ee\u5f55\uff1b\u6587\u4ef6\u7a33\u5b9a\u540e\u7acb\u5373\u589e\u91cf\u4e0a\u4f20\uff0c\u4e2d\u65ad\u540e\u4fdd\u7559\u5df2\u4e0a\u4f20\u7ed3\u679c\u3002",
+            foreground="#555555",
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 4))
         buttons = ttk.Frame(body)
-        buttons.grid(row=7, column=0, columnspan=3, sticky="e", pady=(12, 0))
-        ttk.Button(buttons, text="\u5220\u9664\u5df2\u5b58\u51ed\u636e", command=lambda: (delete_secret(CLOUD_CREDENTIALS), self.cloud_secret.set(""))).pack(side="left")
+        buttons.grid(row=5, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="\u5220\u9664 WebDAV \u51ed\u636e", command=self.clear_webdav_login).pack(side="left")
         ttk.Button(buttons, text="\u6d4b\u8bd5\u8fde\u63a5", command=self.test_cloud_connection).pack(side="left", padx=8)
         ttk.Button(buttons, text="\u4fdd\u5b58\u5e76\u5173\u95ed", command=lambda: (self.save_config(), dialog.destroy())).pack(side="left")
         body.columnconfigure(1, weight=1)
 
+    def _box_proxies(self) -> dict[str, str]:
+        mode = self.proxy_mode.get()
+        if mode in {"??", "DIRECT", "Direct"}:
+            return {}
+        scheme = "http" if mode == "HTTP" else "socks5h"
+        value = f"{scheme}://{self.proxy_host.get().strip()}:{self.proxy_port.get().strip()}"
+        return {"http": value, "https": value}
+
+    def _box_oauth(self) -> BoxOAuthClient:
+        stored = load_secret(CLOUD_CREDENTIALS)
+        client_secret = self.box_client_secret.get() or stored.get("box_client_secret", "")
+        return BoxOAuthClient(
+            client_id=self.box_client_id.get(),
+            client_secret=client_secret,
+            redirect_uri=self.box_redirect_uri.get(),
+            credential_path=CLOUD_CREDENTIALS,
+            proxies=self._box_proxies(),
+        )
+
+    def login_box(self) -> None:
+        self.save_config()
+        self.status_var.set("等待 Box 浏览器授权...")
+
+        def work() -> None:
+            try:
+                self._box_oauth().login(on_authorize=lambda _url: self.events.put(("log", "已打开 Box 登录页面，请授权当前账号。")))
+            except Exception as error:
+                self.events.put(("log", f"Box 登录失败：{error}"))
+                self.events.put(("status", "Box \u767b\u5f55\u5931\u8d25"))
+                return
+            self.events.put(("log", "Box 登录成功，令牌已使用 Windows DPAPI 加密保存。"))
+            self.events.put(("status", "Box 登录成功"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def clear_box_login(self) -> None:
+        delete_secret_keys(CLOUD_CREDENTIALS, "box_access_token", "box_refresh_token", "box_expires_at")
+        self.log_text("已删除当前 Windows 用户保存的 Box 登录令牌。")
+
+    def clear_webdav_login(self) -> None:
+        delete_secret_keys(CLOUD_CREDENTIALS, "webdav_secret", "secret")
+        self.cloud_secret.set("")
+        self.log_text("已删除 WebDAV 凭据。")
+
     def test_cloud_connection(self) -> None:
-        secret = self.cloud_secret.get() or load_secret(CLOUD_CREDENTIALS).get("secret", "")
+        provider = CLOUD_TYPE_VALUES.get(self.cloud_type.get(), "none")
         try:
-            uploader = IncrementalWebDavUploader(
-                ROOT / "artifacts",
-                url=self.cloud_url.get().strip(),
-                user=self.cloud_user.get().strip(),
-                secret=secret,
-                remark=self.cloud_remark.get().strip(),
-                interval=self.cloud_interval.get(),
-            )
-            uploader.test_connection()
+            if provider == "webdav":
+                stored = load_secret(CLOUD_CREDENTIALS)
+                secret = self.cloud_secret.get() or stored.get("webdav_secret", stored.get("secret", ""))
+                uploader = IncrementalWebDavUploader(
+                    ROOT / "artifacts",
+                    url=self.cloud_url.get().strip(),
+                    user=self.cloud_user.get().strip(),
+                    secret=secret,
+                    remark=self.cloud_remark.get().strip(),
+                    interval=self.cloud_interval.get(),
+                )
+                uploader.test_connection()
+                message = "WebDAV \u8fde\u63a5\u6210\u529f\u3002"
+            elif provider == "box":
+                uploader = IncrementalBoxUploader(
+                    ROOT / "artifacts",
+                    oauth=self._box_oauth(),
+                    target_folder=self.box_target_folder.get(),
+                    remark=self.cloud_remark.get(),
+                    interval=self.cloud_interval.get(),
+                )
+                account = uploader.test_connection()
+                account_name = account.get("name") or account.get("login") or "\u5f53\u524d\u8d26\u53f7"
+                message = f"Box \u8fde\u63a5\u6210\u529f\uff1a{account_name}"
+            else:
+                raise ValueError("\u8bf7\u5148\u9009\u62e9 WebDAV \u6216 Box")
         except Exception as error:
             messagebox.showerror("\u4e91\u5907\u4efd", f"\u8fde\u63a5\u5931\u8d25\uff1a{error}")
             return
-        messagebox.showinfo("\u4e91\u5907\u4efd", "WebDAV \u8fde\u63a5\u6210\u529f\u3002")
+        messagebox.showinfo("\u4e91\u5907\u4efd", message)
 
     def open_help(self) -> None:
         HELP_FILE.write_text(HELP_TEXT, encoding="utf-8")
@@ -613,7 +747,7 @@ class App(tk.Tk):
         self.save_config()
         self.stop_file.unlink(missing_ok=True)
         self.pause_file.unlink(missing_ok=True)
-        remark = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "_", self.cloud_remark.get().strip()).strip("_") or "\u5fae\u4fe1\u5907\u4efd"
+        remark = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "_", self.cloud_remark.get().strip()).strip("_") or "测试连接"
         run_name = f"{remark}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
         output = ROOT / "artifacts" / "gui-workflow" / run_name
         output.mkdir(parents=True, exist_ok=True)
@@ -632,21 +766,32 @@ class App(tk.Tk):
             encoding="utf-8",
         )
         uploader = None
-        if self.cloud_enabled.get() and self.cloud_url.get().strip():
-            secret = load_secret(CLOUD_CREDENTIALS).get("secret", "")
+        cloud_provider = CLOUD_TYPE_VALUES.get(self.cloud_type.get(), "none")
+        if cloud_provider != "none":
             try:
-                uploader = IncrementalWebDavUploader(
-                    output,
-                    url=self.cloud_url.get().strip(),
-                    user=self.cloud_user.get().strip(),
-                    secret=secret,
-                    remark=remark,
-                    remote_folder=run_name,
-                    interval=self.cloud_interval.get(),
-                )
+                if cloud_provider == "webdav":
+                    stored = load_secret(CLOUD_CREDENTIALS)
+                    uploader = IncrementalWebDavUploader(
+                        output,
+                        url=self.cloud_url.get().strip(),
+                        user=self.cloud_user.get().strip(),
+                        secret=stored.get("webdav_secret", stored.get("secret", "")),
+                        remark=remark,
+                        remote_folder=run_name,
+                        interval=self.cloud_interval.get(),
+                    )
+                else:
+                    uploader = IncrementalBoxUploader(
+                        output,
+                        oauth=self._box_oauth(),
+                        target_folder=self.box_target_folder.get(),
+                        remark=remark,
+                        remote_folder=run_name,
+                        interval=self.cloud_interval.get(),
+                    )
                 uploader.start()
                 self.active_uploaders.add(uploader)
-                self.log_text(f"\u4e91\u589e\u91cf\u5907\u4efd\u5df2\u542f\u52a8\uff1a{run_name}")
+                self.log_text(f"\u4e91\u589e\u91cf\u5907\u4efd\u5df2\u542f\u52a8\uff08{cloud_provider}\uff09\uff1a{run_name}")
             except Exception as error:
                 self.log_text(f"\u4e91\u589e\u91cf\u5907\u4efd\u542f\u52a8\u5931\u8d25\uff0c\u91c7\u96c6\u4ecd\u4f1a\u7ee7\u7eed\uff1a{error}")
                 uploader = None
@@ -720,9 +865,9 @@ class App(tk.Tk):
                     while not uploader.errors.empty():
                         errors.append(uploader.errors.get_nowait())
                     if errors:
-                        self.events.put(("log", "\u4e91\u4e0a\u4f20\u672a\u5b8c\u6210\u6587\u4ef6\uff1a\n" + "\n".join(errors[-20:])))
+                        self.events.put(("log", "云上传未完成文件：\n" + "\n".join(errors[-20:])))
                     else:
-                        self.events.put(("log", f"\u4e91\u589e\u91cf\u5907\u4efd\u5df2\u5b8c\u6210\uff1a{uploader.remote_folder}"))
+                        self.events.put(("log", f"云增量备份已完成：{uploader.remote_folder}"))
                 self.events.put(("backup_done", generation))
         threading.Thread(target=work, daemon=True).start()
         if self.minimize_after_start.get():

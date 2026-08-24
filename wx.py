@@ -309,7 +309,7 @@ def saved_group_section_bounds(
     """Return the visible Saved Groups text bounds and whether the section continues."""
     headings = [(line, section_kind(line.text)) for line in lines]
     saved_heading = next(
-        (line for line, kind in headings if kind == "saved_groups"),
+        (line for line, kind in headings if kind in {"saved_groups", "groups"}),
         None,
     )
     if saved_heading is not None:
@@ -355,7 +355,7 @@ def find_saved_group_result(
 
 
 def saved_group_heading(lines: list[open_group.OcrLine]) -> open_group.OcrLine | None:
-    return next((line for line in lines if section_kind(line.text) == "saved_groups"), None)
+    return next((line for line in lines if section_kind(line.text) in {"saved_groups", "groups"}), None)
 
 
 def saved_groups_is_collapsed(
@@ -799,7 +799,7 @@ def direct_chat_avatar(
     if add is None and len(blocks) == 2:
         return blocks[0]
     if not any(
-        "searchchathistory" in text or "??????" in text for text in normalized
+        "searchchathistory" in text or "\u804a\u5929\u8bb0\u5f55" in text for text in normalized
     ):
         return None
     if add is not None:
