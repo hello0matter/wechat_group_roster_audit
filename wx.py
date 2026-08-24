@@ -34,6 +34,9 @@ CONTACTS_SCROLLBAR_X_RATIO = 0.335
 CONTACTS_SCROLLBAR_THUMB_Y_RATIO = 0.17
 CONTACTS_SCROLLBAR_TOP_Y_RATIO = 0.083
 SAVED_GROUPS_TEXT_LEFT_RATIO = 0.24
+# Discovery uses a wider crop because OCR often drops the first characters of
+# Chinese group names when the avatar column is included.
+SAVED_GROUP_DISCOVERY_LEFT_RATIO = 0.10
 SAVED_GROUPS_TEXT_SCALE = 3
 MAX_PAGES = 1000
 UNCHANGED_PAGE_MEAN_DIFFERENCE = 0.5
@@ -222,6 +225,7 @@ def left_pane_lines(
 
 def section_kind(text: str) -> str | None:
     normalized = open_group.normalize_text(text)
+    raw_normalized = normalized
     if normalized[:1] in {">", "v", "y"}:
         normalized = normalized[1:]
     if normalized in {"mostused", "最常使用"}:
@@ -230,7 +234,12 @@ def section_kind(text: str) -> str | None:
         return "saved_groups"
     if ("group" in normalized and "chat" in normalized) or "群聊" in normalized:
         return "groups"
-    if normalized in {"contacts", "联系人"}:
+    # Tesseract's Chinese model can render the ``群聊`` disclosure label as
+    # ``v Bo``/``Bo``.  It is only accepted as a section when the OCR text
+    # carries the disclosure prefix, avoiding false positives in group names.
+    if raw_normalized[:1] in {"v", "y", ">"} and normalized in {"bo", "80", "b0"}:
+        return "groups"
+    if normalized in {"contacts", "联系人"} or normalized.startswith("联系人"):
         return "contacts"
     if "officialaccounts" in normalized or "公众号" in normalized:
         return "official_accounts"
@@ -361,12 +370,31 @@ def saved_group_heading(lines: list[open_group.OcrLine]) -> open_group.OcrLine |
 def saved_groups_is_collapsed(
     lines: list[open_group.OcrLine], heading: open_group.OcrLine
 ) -> bool:
-    """Recognize the closed disclosure row without reading any group names."""
+    """Recognize a closed disclosure row, including Chinese count labels.
+
+    OCR often returns ``群聊 17`` without the disclosure arrow.  In that
+    state there are no row labels between the heading and the next section;
+    an expanded section has at least one non-heading line in that interval.
+    """
     label = heading.text.lstrip()
     if label.startswith(">"):
         return True
-    _, end_top, _ = saved_group_section_bounds(lines, False)
-    return end_top is not None and end_top - heading.bottom < 70
+    headings = [
+        line for line in lines
+        if section_kind(line.text) is not None and line.top > heading.bottom
+    ]
+    next_top = min((line.top for line in headings), default=None)
+    between = [
+        line for line in lines
+        if line.top > heading.bottom
+        and (next_top is None or line.top < next_top)
+        and section_kind(line.text) is None
+        and line.text.strip()
+    ]
+    # A real row label means the section is already expanded.  Do not use a
+    # distance threshold here: at the top of a short list the first row can
+    # legitimately sit close to the next heading.
+    return not between
 
 
 def expand_saved_groups(
@@ -378,7 +406,7 @@ def expand_saved_groups(
     for attempt in range(2):
         frame = directory / ".saved-groups-expand-frame.png"
         full_image, _ = capture_live_window(window, frame)
-        frame.unlink(missing_ok=True)
+        # Keep this hidden probe for post-run inspection.
         ocr_path = directory / ".saved-groups-expand-ocr.png"
         full_image.save(ocr_path)
         lines = open_group.run_ocr(tesseract, ocr_path, psm=11, language="chi_sim+eng")
@@ -407,7 +435,7 @@ def expand_saved_groups(
 
     verification_frame = directory / ".saved-groups-expand-verify-frame.png"
     verification_image, _ = capture_live_window(window, verification_frame)
-    verification_frame.unlink(missing_ok=True)
+    # Keep this hidden probe for post-run inspection.
     verification_path = directory / ".saved-groups-expand-verify-ocr.png"
     verification_image.save(verification_path)
     verification_lines = open_group.run_ocr(
@@ -416,11 +444,9 @@ def expand_saved_groups(
     verification_path.unlink(missing_ok=True)
     verification_lines = left_pane_lines(verification_lines, verification_image)
     verification_heading = saved_group_heading(verification_lines)
-    return (
-        verification_heading is not None
-        and not saved_groups_is_collapsed(verification_lines, verification_heading)
-        and page_changed(full_image, verification_image)
-    )
+    # OCR may miss every Chinese row label even though the panel expanded.
+    # A changed page with the heading still present is sufficient to proceed.
+    return verification_heading is not None and page_changed(full_image, verification_image)
 
 
 def find_saved_group_in_expanded_text(

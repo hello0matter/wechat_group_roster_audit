@@ -795,8 +795,12 @@ class App(tk.Tk):
             except Exception as error:
                 self.log_text(f"\u4e91\u589e\u91cf\u5907\u4efd\u542f\u52a8\u5931\u8d25\uff0c\u91c7\u96c6\u4ecd\u4f1a\u7ee7\u7eed\uff1a{error}")
                 uploader = None
+        # While running the editable GUI from Python, always use the current
+        # source runner so fixes can be tested immediately.  The bundled EXE
+        # is reserved for a frozen/portable GUI distribution.
         portable_runner = ROOT / "wechat_backup_runner.exe"
-        if portable_runner.exists():
+        use_bundle = bool(getattr(sys, "frozen", False))
+        if use_bundle and portable_runner.exists():
             interpreter = str(portable_runner)
             bundled_root = ROOT / "pywechat2"
             script_args = ["--pywechat-root", str(bundled_root)] if bundled_root.is_dir() else []

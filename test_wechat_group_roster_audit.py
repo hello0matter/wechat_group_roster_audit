@@ -421,6 +421,20 @@ class OpenGroupTests(unittest.TestCase):
         self.assertEqual(wx.section_kind("\u8054\u7cfb\u4eba"), "contacts")
         self.assertEqual(wx.section_kind("\u4fdd\u5b58\u7684\u7fa4\u804a"), "saved_groups")
 
+    def test_section_kind_accepts_common_ocr_for_chinese_group_heading(self):
+        self.assertEqual(wx.section_kind("v Bo"), "groups")
+
+    def test_counted_group_heading_is_collapsed_without_rows(self):
+        heading = open_group.OcrLine("群聊 17", 10, 20, 90, 40)
+        contacts = open_group.OcrLine("联系人 2835", 10, 70, 90, 90)
+        self.assertTrue(wx.saved_groups_is_collapsed([heading, contacts], heading))
+
+    def test_group_heading_with_row_is_expanded(self):
+        heading = open_group.OcrLine("群聊 17", 10, 20, 90, 40)
+        row = open_group.OcrLine("测试群", 20, 60, 150, 80)
+        contacts = open_group.OcrLine("联系人 2835", 10, 120, 90, 140)
+        self.assertFalse(wx.saved_groups_is_collapsed([heading, row, contacts], heading))
+
     def test_saved_group_bounds_accepts_new_chinese_group_heading(self):
         lines = [
             open_group.OcrLine("\u7fa4\u804a", 10, 20, 90, 40),

@@ -74,24 +74,25 @@ def discover_saved_group_names(
             frame.unlink(missing_ok=True)
             break
         section_started = True
-        left = round(image.width * wx.SAVED_GROUPS_TEXT_LEFT_RATIO)
+        left = round(image.width * wx.SAVED_GROUP_DISCOVERY_LEFT_RATIO)
         right = round(image.width * wx.LEFT_PANE[2])
         bottom = image.height if end is None else end
         if bottom > start:
-            crop = image.crop((left, start, right, bottom)).resize(
-                ((right - left) * wx.SAVED_GROUPS_TEXT_SCALE, (bottom - start) * wx.SAVED_GROUPS_TEXT_SCALE),
-                Image.Resampling.LANCZOS,
-            )
-            crop_path = directory / ".saved-discovery-text.png"
-            crop.save(crop_path)
-            for line in open_group.run_ocr(tesseract, crop_path, psm=6, language="chi_sim+eng"):
+            # Prefer the full-list OCR coordinates.  Enlarging a narrow crop
+            # makes avatar pixels and disclosure arrows look like fake names
+            # (for example ``WE!``), while the full pass preserves Chinese
+            # labels and their row positions.
+            for line in pane_lines:
+                if not (start < line.top < bottom):
+                    continue
+                if line.left < round(image.width * 0.11):
+                    continue
                 name = re.sub(r"^[>vVyY\s]+", "", line.text).strip()
                 normalized = open_group.normalize_text(name)
-                if len(normalized) >= 2 and wx.section_kind(name) is None and name not in names:
+                if normalized and wx.section_kind(name) is None and name not in names:
                     names.append(name)
                     if len(names) >= maximum:
                         break
-            crop_path.unlink(missing_ok=True)
         frame.unlink(missing_ok=True)
         if len(names) >= maximum or not continues:
             break
