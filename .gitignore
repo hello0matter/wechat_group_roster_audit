@@ -11,3 +11,7 @@ gui_config.json
 group_nicknames.csv
 panel_config.json
 hotkey_status.json
+cloud_credentials.dat
+pause.request
+stop.request
+skip.request

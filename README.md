@@ -280,3 +280,25 @@ UIA 树为空，任何公开的 `pywinauto`/`uiautomation` 选择器都会失败
 ```powershell
 & "D:\Program Files\Python\Python311\python.exe" -m unittest -v
 ```
+
+
+## Incremental WebDAV cloud backup
+
+The Python GUI exposes `Global Settings -> Cloud Incremental Backup Settings`.
+Each run creates a separate local and remote directory named:
+
+```text
+<custom-remark>-YYYYMMDD-HHMMSS-<unique-suffix>
+```
+
+The uploader watches the active run directory and uploads each completed file
+with streaming HTTP `PUT`; it does not wait for the entire Weixin workflow to
+finish. Pausing or stopping collection therefore preserves and uploads files
+that were already fully written. Hidden temporary probe files are excluded.
+The directory includes `manifest.json`, result JSON/JSONL files, logs, and PNG
+screenshots.
+
+The first provider is generic WebDAV, suitable for Jianguoyun, NAS servers, and
+other WebDAV services. The password/token is encrypted with Windows DPAPI in
+`cloud_credentials.dat`; it is never stored in `gui_config.json` or logs.
+Use an application-specific password where the provider supports one.

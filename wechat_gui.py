@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -16,13 +17,18 @@ import shutil
 import tempfile
 import urllib.request
 import zipfile
+import uuid
 import psutil
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from secret_store import delete_secret, load_secret, save_secret
+from stream_backup import IncrementalWebDavUploader
+
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 CONFIG = ROOT / "gui_config.json"
+CLOUD_CREDENTIALS = ROOT / "cloud_credentials.dat"
 HELP_FILE = ROOT / "说明.txt"
 DEFAULT_PYWECHAT = Path(r"D:\tmp\anjian\pj\st\tmp\pywechat2")
 MODE_LABELS = {"auto": "自动", "list": "只截图", "detail": "打开详情"}
@@ -106,6 +112,7 @@ class App(tk.Tk):
         self.config_data = load_config()
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.active_processes: set[subprocess.Popen[str]] = set()
+        self.active_uploaders: set[IncrementalWebDavUploader] = set()
         self.backup_running = False
         self.backup_paused = False
         self.run_generation = 0
@@ -144,6 +151,12 @@ class App(tk.Tk):
         self.member_scroll_delta = tk.IntVar(value=int(self.config_data.get("member_scroll_delta", 12000)))
         self.minimize_after_start = tk.BooleanVar(value=bool(self.config_data.get("minimize_after_start", True)))
         self.group_error_policy = tk.StringVar(value=str(self.config_data.get("group_error_policy", "skip")))
+        self.cloud_enabled = tk.BooleanVar(value=bool(self.config_data.get("cloud_enabled", False)))
+        self.cloud_remark = tk.StringVar(value=str(self.config_data.get("cloud_remark", "\u5fae\u4fe1\u5907\u4efd")))
+        self.cloud_url = tk.StringVar(value=str(self.config_data.get("cloud_url", "")))
+        self.cloud_user = tk.StringVar(value=str(self.config_data.get("cloud_user", "")))
+        self.cloud_secret = tk.StringVar(value="")
+        self.cloud_interval = tk.DoubleVar(value=float(self.config_data.get("cloud_interval", 1.0)))
         self.hotkey_start = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q")), str(self.config_data.get("hotkey_start", "Ctrl+Alt+Q"))))
         self.hotkey_pause = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E")), str(self.config_data.get("hotkey_pause", "Ctrl+Alt+E"))))
         self.hotkey_stop = tk.StringVar(value=HOTKEY_MIGRATIONS.get(str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S")), str(self.config_data.get("hotkey_stop", "Ctrl+Alt+S"))))
@@ -253,6 +266,11 @@ class App(tk.Tk):
             "member_scroll_delta": self.member_scroll_delta.get(),
             "minimize_after_start": self.minimize_after_start.get(),
             "group_error_policy": self.group_error_policy.get(),
+            "cloud_enabled": self.cloud_enabled.get(),
+            "cloud_remark": self.cloud_remark.get().strip(),
+            "cloud_url": self.cloud_url.get().strip(),
+            "cloud_user": self.cloud_user.get().strip(),
+            "cloud_interval": self.cloud_interval.get(),
             "hotkey_start": self.hotkey_start.get(),
             "hotkey_pause": self.hotkey_pause.get(),
             "hotkey_stop": self.hotkey_stop.get(),
@@ -260,6 +278,9 @@ class App(tk.Tk):
             "hotkey_minimize": self.hotkey_minimize.get(),
         }
         CONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if self.cloud_secret.get():
+            save_secret(CLOUD_CREDENTIALS, {"secret": self.cloud_secret.get()})
+            self.cloud_secret.set("")
         self.config_data = data
         self.log_text("全局配置已保存")
 
@@ -300,6 +321,50 @@ class App(tk.Tk):
         buttons.grid(row=hotkey_start + len(hotkeys) + 1, column=0, columnspan=3, pady=(12, 0), sticky="e")
         ttk.Button(buttons, text="保存并关闭", command=lambda: (self.save_config(), self._restart_hotkeys(), dialog.destroy())).pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=(0, 8))
+        ttk.Button(buttons, text="\u4e91\u589e\u91cf\u5907\u4efd\u8bbe\u7f6e", command=self.open_cloud_settings).pack(side="right", padx=(0, 8))
+
+    def open_cloud_settings(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("\u4e91\u589e\u91cf\u5907\u4efd")
+        dialog.transient(self)
+        dialog.grab_set()
+        body = ttk.Frame(dialog, padding=14)
+        body.pack(fill="both", expand=True)
+        ttk.Checkbutton(body, text="\u542f\u7528\u4efb\u52a1\u751f\u6210\u540e\u7acb\u5373\u4e0a\u4f20", variable=self.cloud_enabled).grid(row=0, column=0, columnspan=3, sticky="w", pady=4)
+        fields = (
+            ("\u4efb\u52a1\u5907\u6ce8", self.cloud_remark, False),
+            ("WebDAV \u6839\u5730\u5740", self.cloud_url, False),
+            ("\u7528\u6237\u540d", self.cloud_user, False),
+            ("\u5bc6\u7801 / Token", self.cloud_secret, True),
+            ("\u626b\u63cf\u95f4\u9694\uff08\u79d2\uff09", self.cloud_interval, False),
+        )
+        for row, (label, variable, secret) in enumerate(fields, 1):
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
+            ttk.Entry(body, textvariable=variable, width=48, show="*" if secret else "").grid(row=row, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=4)
+        ttk.Label(body, text="\u8fdc\u7a0b\u76ee\u5f55\uff1a\u5907\u6ce8-\u65f6\u95f4-\u552f\u4e00\u540e\u7f00\uff1b\u6587\u4ef6\u7a33\u5b9a\u540e\u7acb\u5373\u6d41\u5f0f\u4e0a\u4f20\u3002", foreground="#555555").grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 4))
+        buttons = ttk.Frame(body)
+        buttons.grid(row=7, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="\u5220\u9664\u5df2\u5b58\u51ed\u636e", command=lambda: (delete_secret(CLOUD_CREDENTIALS), self.cloud_secret.set(""))).pack(side="left")
+        ttk.Button(buttons, text="\u6d4b\u8bd5\u8fde\u63a5", command=self.test_cloud_connection).pack(side="left", padx=8)
+        ttk.Button(buttons, text="\u4fdd\u5b58\u5e76\u5173\u95ed", command=lambda: (self.save_config(), dialog.destroy())).pack(side="left")
+        body.columnconfigure(1, weight=1)
+
+    def test_cloud_connection(self) -> None:
+        secret = self.cloud_secret.get() or load_secret(CLOUD_CREDENTIALS).get("secret", "")
+        try:
+            uploader = IncrementalWebDavUploader(
+                ROOT / "artifacts",
+                url=self.cloud_url.get().strip(),
+                user=self.cloud_user.get().strip(),
+                secret=secret,
+                remark=self.cloud_remark.get().strip(),
+                interval=self.cloud_interval.get(),
+            )
+            uploader.test_connection()
+        except Exception as error:
+            messagebox.showerror("\u4e91\u5907\u4efd", f"\u8fde\u63a5\u5931\u8d25\uff1a{error}")
+            return
+        messagebox.showinfo("\u4e91\u5907\u4efd", "WebDAV \u8fde\u63a5\u6210\u529f\u3002")
 
     def open_help(self) -> None:
         HELP_FILE.write_text(HELP_TEXT, encoding="utf-8")
@@ -548,7 +613,43 @@ class App(tk.Tk):
         self.save_config()
         self.stop_file.unlink(missing_ok=True)
         self.pause_file.unlink(missing_ok=True)
-        output = ROOT / "artifacts" / "gui-workflow"
+        remark = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff_-]+", "_", self.cloud_remark.get().strip()).strip("_") or "\u5fae\u4fe1\u5907\u4efd"
+        run_name = f"{remark}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        output = ROOT / "artifacts" / "gui-workflow" / run_name
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "format": "wechat-roster-visible-backup-v1",
+                    "run_name": run_name,
+                    "remark": remark,
+                    "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    "tasks": tasks,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n",
+            encoding="utf-8",
+        )
+        uploader = None
+        if self.cloud_enabled.get() and self.cloud_url.get().strip():
+            secret = load_secret(CLOUD_CREDENTIALS).get("secret", "")
+            try:
+                uploader = IncrementalWebDavUploader(
+                    output,
+                    url=self.cloud_url.get().strip(),
+                    user=self.cloud_user.get().strip(),
+                    secret=secret,
+                    remark=remark,
+                    remote_folder=run_name,
+                    interval=self.cloud_interval.get(),
+                )
+                uploader.start()
+                self.active_uploaders.add(uploader)
+                self.log_text(f"\u4e91\u589e\u91cf\u5907\u4efd\u5df2\u542f\u52a8\uff1a{run_name}")
+            except Exception as error:
+                self.log_text(f"\u4e91\u589e\u91cf\u5907\u4efd\u542f\u52a8\u5931\u8d25\uff0c\u91c7\u96c6\u4ecd\u4f1a\u7ee7\u7eed\uff1a{error}")
+                uploader = None
         portable_runner = ROOT / "wechat_backup_runner.exe"
         if portable_runner.exists():
             interpreter = str(portable_runner)
@@ -593,6 +694,9 @@ class App(tk.Tk):
         try:
             process = subprocess.Popen(args, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="gb18030", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except OSError as error:
+            if uploader is not None:
+                uploader.stop()
+                self.active_uploaders.discard(uploader)
             self.backup_running = False
             self.backup_paused = False
             self.status_var.set(f"启动失败: {error}")
@@ -609,6 +713,16 @@ class App(tk.Tk):
                 self.events.put(("status", "备份完成" if process.returncode == 0 else "备份失败"))
             finally:
                 self.active_processes.discard(process)
+                if uploader is not None:
+                    uploader.stop()
+                    self.active_uploaders.discard(uploader)
+                    errors = []
+                    while not uploader.errors.empty():
+                        errors.append(uploader.errors.get_nowait())
+                    if errors:
+                        self.events.put(("log", "\u4e91\u4e0a\u4f20\u672a\u5b8c\u6210\u6587\u4ef6\uff1a\n" + "\n".join(errors[-20:])))
+                    else:
+                        self.events.put(("log", f"\u4e91\u589e\u91cf\u5907\u4efd\u5df2\u5b8c\u6210\uff1a{uploader.remote_folder}"))
                 self.events.put(("backup_done", generation))
         threading.Thread(target=work, daemon=True).start()
         if self.minimize_after_start.get():
@@ -633,6 +747,9 @@ class App(tk.Tk):
                     )
                 except OSError:
                     pass
+        for uploader in list(self.active_uploaders):
+            uploader.stop()
+        self.active_uploaders.clear()
         self.destroy()
 
     def _poll(self) -> None:
