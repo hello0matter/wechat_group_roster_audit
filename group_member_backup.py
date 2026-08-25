@@ -385,19 +385,32 @@ def open_named_group(
     open_group.click_screen_point(point)
     time.sleep(wx.chat_open_delay())
     opened_path = directory / "opened.png"
-    wx.capture_live_window(window, opened_path)
+    opened_image, _ = wx.capture_live_window(window, opened_path)
     window = audit.select_weixin_window(int(window["pid"])) or window
-    with Image.open(opened_path) as opened_image:
+    join_line = next(
+        (
+            line
+            for line in open_group.run_ocr(tesseract, opened_path, psm=11, language="chi_sim+eng")
+            if "进入群聊" in open_group.normalize_text(line.text)
+        ),
+        None,
+    )
+    if join_line is not None:
+        point = wx.screen_point_from_capture(
+            window, opened_image,
+            (join_line.left + join_line.right) // 2,
+            (join_line.top + join_line.bottom) // 2,
+        )
+    else:
         button = wx.join_button_bbox(opened_image)
         if button is None:
             raise RuntimeError("group_preview_button_not_found")
         cx = (button[0] + button[2]) / 2
         cy = (button[1] + button[3]) / 2
-        open_group.click_screen_point(
-            wx.point_in_window(window, (cx / opened_image.width, cy / opened_image.height))
-        )
-        time.sleep(wx.chat_open_delay())
-        wx.capture_live_window(window, opened_path)
+        point = wx.point_in_window(window, (cx / opened_image.width, cy / opened_image.height))
+    open_group.click_screen_point(point)
+    time.sleep(wx.chat_open_delay())
+    wx.capture_live_window(window, opened_path)
     # The preview button click is the authoritative transition.  Header OCR
     # is unreliable for Chinese titles and used to abort before the member
     # workflow even though the chat had opened successfully.

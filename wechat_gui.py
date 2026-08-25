@@ -149,7 +149,7 @@ class App(tk.Tk):
         self.member_pages = tk.IntVar(value=int(self.config_data.get("member_pages", 1000)))
         self.member_term_timeout = tk.DoubleVar(value=float(self.config_data.get("member_term_timeout", 40.0)))
         self.group_search_prefix = tk.IntVar(value=int(self.config_data.get("group_search_prefix", 4)))
-        self.ocr_backend = tk.StringVar(value=str(self.config_data.get("ocr_backend", "paddle")))
+        self.ocr_backend = tk.StringVar(value=str(self.config_data.get("ocr_backend", "rapidocr")))
         self.paddle_model = tk.StringVar(value=str(self.config_data.get("paddle_model", "server")))
         self.click_delay = tk.DoubleVar(value=float(self.config_data.get("click_delay", 0.06)))
         self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.15)))
@@ -345,7 +345,7 @@ class App(tk.Tk):
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             if variable is self.ocr_backend:
-                ttk.Combobox(body, textvariable=variable, values=("tesseract", "paddle", "rapidocr"), state="readonly", width=12).grid(row=row, column=1, padx=10, pady=4)
+                ttk.Combobox(body, textvariable=variable, values=("rapidocr",), state="readonly", width=12).grid(row=row, column=1, padx=10, pady=4)
             elif variable is self.paddle_model:
                 ttk.Combobox(body, textvariable=variable, values=("mobile", "server"), state="readonly", width=12).grid(row=row, column=1, padx=10, pady=4)
             else:
