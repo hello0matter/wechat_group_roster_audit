@@ -88,6 +88,12 @@ def discover_saved_group_names(
                 if line.left < round(image.width * 0.11):
                     continue
                 name = re.sub(r"^[>vVyY\s]+", "", line.text).strip()
+                # Keep OCR noise out of the next open_named_group call. For
+                # Chinese labels, the CJK skeleton is substantially more
+                # stable than the mixed avatar/Latin text returned by OCR.
+                cjk_name = "".join(re.findall(r"[\u4e00-\u9fff]", name))
+                if len(cjk_name) >= 2:
+                    name = cjk_name
                 normalized = open_group.normalize_text(name)
                 if normalized and wx.section_kind(name) is None and name not in names:
                     names.append(name)

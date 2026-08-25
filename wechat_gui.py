@@ -25,6 +25,9 @@ from tkinter import filedialog, messagebox, ttk
 from box_backup import BoxOAuthClient, IncrementalBoxUploader
 from secret_store import delete_secret_keys, load_secret, update_secret
 from stream_backup import IncrementalWebDavUploader
+import open_group
+import wx
+import wechat_group_roster_audit as audit
 
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
@@ -236,6 +239,7 @@ class App(tk.Tk):
         self.stop_button.pack(side="left", padx=(8, 0))
         ttk.Button(controls, text="全局设置", command=self.open_global_settings).pack(side="left", padx=(8, 0))
         ttk.Button(controls, text="保存配置", command=self.save_config).pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="测试识别", command=self.test_recognition).pack(side="left", padx=(8, 0))
         actions.columnconfigure(1, weight=1)
 
         self.log = tk.Text(main, height=12, state="disabled", wrap="word")
@@ -506,6 +510,32 @@ class App(tk.Tk):
     def open_help(self) -> None:
         HELP_FILE.write_text(HELP_TEXT, encoding="utf-8")
         os.startfile(str(HELP_FILE))
+
+    def test_recognition(self) -> None:
+        """Capture the current WeChat view and export raw OCR for diagnostics."""
+        window = audit.select_weixin_window()
+        if window is None:
+            messagebox.showwarning("测试识别", "未找到可见的微信窗口。")
+            return
+        tesseract = open_group.resolve_tesseract(None)
+        if tesseract is None:
+            messagebox.showerror("测试识别", "未找到 Tesseract OCR。")
+            return
+        output = ROOT / "artifacts" / "recognition-test" / time.strftime("%Y%m%d-%H%M%S")
+        output.mkdir(parents=True, exist_ok=True)
+        image_path = output / "screen.png"
+        image, _ = wx.capture_live_window(window, image_path)
+        lines = open_group.run_ocr(tesseract, image_path, psm=11, language="chi_sim+eng")
+        payload = {
+            "window": {key: window.get(key) for key in ("pid", "left", "top", "width", "height")},
+            "image": str(image_path.resolve()),
+            "tesseract": str(tesseract),
+            "lines": [line._asdict() for line in lines],
+        }
+        report = output / "ocr.json"
+        report.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self.log_text(f"识别测试完成：{report}")
+        messagebox.showinfo("测试识别", f"已保存截图和 OCR 明细：\n{report}")
 
     def _hotkey_parts(self, value: str) -> tuple[int, int]:
         names = [part.strip().upper() for part in value.replace(" ", "").split("+") if part.strip()]
