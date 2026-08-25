@@ -150,7 +150,7 @@ class App(tk.Tk):
         self.member_term_timeout = tk.DoubleVar(value=float(self.config_data.get("member_term_timeout", 40.0)))
         self.group_search_prefix = tk.IntVar(value=int(self.config_data.get("group_search_prefix", 4)))
         self.ocr_backend = tk.StringVar(value=str(self.config_data.get("ocr_backend", "paddle")))
-        self.paddle_model = tk.StringVar(value=str(self.config_data.get("paddle_model", "mobile")))
+        self.paddle_model = tk.StringVar(value=str(self.config_data.get("paddle_model", "server")))
         self.click_delay = tk.DoubleVar(value=float(self.config_data.get("click_delay", 0.06)))
         self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.15)))
         self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))

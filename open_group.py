@@ -253,7 +253,7 @@ def run_ocr(
 def _paddle_engine():
     from paddleocr import PaddleOCR
 
-    model_size = os.environ.get("WECHAT_PADDLE_MODEL", "mobile").lower()
+    model_size = os.environ.get("WECHAT_PADDLE_MODEL", "server").lower()
     model_kwargs = {}
     if model_size == "mobile":
         model_kwargs.update(

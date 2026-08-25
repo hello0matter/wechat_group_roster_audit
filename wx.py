@@ -441,7 +441,8 @@ def expand_saved_groups(
     # Click the discovered header row, not a hard-coded disclosure-arrow coordinate.
     # Click the disclosure glyph itself. Clicking the row center can select a
     # group entry on compact/resized contact panes instead of expanding it.
-    arrow_x = min(heading.right, heading.left + max(12, (heading.right - heading.left) // 3))
+    has_glyph = bool(re.match(r"^[>＞〉》﹥»vVyY∨﹀︾⌄↓✔✓√]", heading.text.lstrip()))
+    arrow_x = heading.left + 8 if has_glyph else max(8, heading.left - 20)
     point = screen_point_from_capture(
         window,
         full_image,
