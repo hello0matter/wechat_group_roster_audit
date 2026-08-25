@@ -543,7 +543,8 @@ class WxCommandTests(unittest.TestCase):
     def test_group_scroll_is_faster_than_the_previous_fixed_delay(self):
         self.assertEqual(wx.LIST_SCROLL_DELTA, -12000)
         self.assertLess(wx.LIST_SCROLL_SETTLE_SECONDS, 0.65)
-        self.assertEqual(wx.LIST_TOP_SCROLL_STEPS, 3)
+        self.assertEqual(wx.LIST_TOP_SCROLL_STEPS, 6)
+        self.assertEqual(wx.LIST_TOP_NUDGE_STEPS, 2)
 
     @patch("wx.scroll_list")
     @patch("wx.open_group.run_ocr")

@@ -28,7 +28,9 @@ LEFT_PANE = (0.065, 0.035, 0.36, 0.96)
 LIST_SCROLL_DELTA = -12000
 RECENT_SCROLL_DELTA = -120
 LIST_TOP_SCROLL_DELTA = 12000
-LIST_TOP_SCROLL_STEPS = 3
+LIST_TOP_SCROLL_STEPS = 6
+LIST_TOP_NUDGE_DELTA = 720
+LIST_TOP_NUDGE_STEPS = 2
 LIST_SCROLL_SETTLE_SECONDS = 0.25
 CONTACTS_SCROLLBAR_X_RATIO = 0.335
 CONTACTS_SCROLLBAR_THUMB_Y_RATIO = 0.17
@@ -624,6 +626,13 @@ def scroll_list_to_top(window: dict[str, object]) -> None:
     for _ in range(LIST_TOP_SCROLL_STEPS):
         open_group.scroll_screen_point(point_in_window(window, LIST_SCROLL_POINT), LIST_TOP_SCROLL_DELTA)
         time.sleep(0.1)
+    # Some Qt list views clamp a large wheel event just short of the true top.
+    # Two smaller upward nudges commit the list to its first row.
+    for _ in range(LIST_TOP_NUDGE_STEPS):
+        open_group.scroll_screen_point(
+            point_in_window(window, LIST_SCROLL_POINT), LIST_TOP_NUDGE_DELTA
+        )
+        time.sleep(0.08)
     time.sleep(LIST_SCROLL_SETTLE_SECONDS)
 
 
