@@ -20,10 +20,9 @@ import wx
 
 
 DEFAULT_TERMS = ("1",) + tuple(string.ascii_lowercase)
-# The member search field begins just to the right of the conversation pane;
-# use its left-center rather than the far right, which can fall through to the
-# chat composer on narrow/resized windows.
-GROUP_SEARCH_POINT = (0.72, 0.18)
+# The member search field is the wide box at the top of the right member pane.
+# Keep the point inside its center; a lower point lands on the first avatar.
+GROUP_SEARCH_POINT = (0.82, 0.15)
 GROUP_RESULT_SCROLL_POINT = (0.79, 0.72)
 PROFILE_DISMISS_POINT = (0.50, 0.72)
 RESULT_PANEL = (0.60, 0.18, 0.94, 0.96)
@@ -282,10 +281,10 @@ def member_search_visible(window: dict[str, object]) -> bool:
     probe = Path("artifacts") / ".member-search-focus.png"
     try:
         image, _ = wx.capture_live_window(window, probe)
-        left = round(image.width * 0.70)
+        left = round(image.width * 0.68)
         right = round(image.width * 0.97)
-        top = round(image.height * 0.14)
-        bottom = round(image.height * 0.27)
+        top = round(image.height * 0.12)
+        bottom = round(image.height * 0.20)
         green = 0
         for y in range(top, bottom, 2):
             for x in range(left, right, 2):
