@@ -242,8 +242,14 @@ class App(tk.Tk):
         ttk.Button(controls, text="测试识别", command=self.test_recognition).pack(side="left", padx=(8, 0))
         actions.columnconfigure(1, weight=1)
 
-        self.log = tk.Text(main, height=12, state="disabled", wrap="word")
-        self.log.pack(fill="both", expand=True, pady=(8, 4))
+        log_frame = ttk.Frame(main)
+        log_frame.pack(fill="both", expand=True, pady=(8, 4))
+        self.log = tk.Text(log_frame, height=12, state="disabled", wrap="word")
+        self.log.pack(side="left", fill="both", expand=True)
+        log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log.yview)
+        log_scroll.pack(side="right", fill="y")
+        self.log.configure(yscrollcommand=log_scroll.set)
+        ttk.Button(main, text="放大查看输出", command=self.open_log_viewer).pack(anchor="e")
         ttk.Label(main, textvariable=self.status_var, relief="sunken", anchor="w").pack(fill="x")
 
     def log_text(self, text: str) -> None:
@@ -251,6 +257,20 @@ class App(tk.Tk):
         self.log.insert("end", text.rstrip() + "\n")
         self.log.see("end")
         self.log.configure(state="disabled")
+
+    def open_log_viewer(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("输出详情")
+        dialog.geometry("900x650")
+        frame = ttk.Frame(dialog, padding=8)
+        frame.pack(fill="both", expand=True)
+        text = tk.Text(frame, wrap="none")
+        text.pack(side="left", fill="both", expand=True)
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        scroll.pack(side="right", fill="y")
+        text.configure(yscrollcommand=scroll.set)
+        text.insert("1.0", self.log.get("1.0", "end"))
+        text.configure(state="disabled")
 
     def save_config(self) -> None:
         data = {
@@ -521,21 +541,24 @@ class App(tk.Tk):
         if tesseract is None:
             messagebox.showerror("测试识别", "未找到 Tesseract OCR。")
             return
-        output = ROOT / "artifacts" / "recognition-test" / time.strftime("%Y%m%d-%H%M%S")
-        output.mkdir(parents=True, exist_ok=True)
+        output = Path(tempfile.mkdtemp(prefix="wechat-ocr-"))
         image_path = output / "screen.png"
         image, _ = wx.capture_live_window(window, image_path)
         lines = open_group.run_ocr(tesseract, image_path, psm=11, language="chi_sim+eng")
-        payload = {
-            "window": {key: window.get(key) for key in ("pid", "left", "top", "width", "height")},
-            "image": str(image_path.resolve()),
-            "tesseract": str(tesseract),
-            "lines": [line._asdict() for line in lines],
-        }
-        report = output / "ocr.json"
-        report.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        self.log_text(f"识别测试完成：{report}")
-        messagebox.showinfo("测试识别", f"已保存截图和 OCR 明细：\n{report}")
+        rows = [
+            f"窗口: PID={window.get('pid')} 位置=({window.get('left')},{window.get('top')}) "
+            f"大小={window.get('width')}x{window.get('height')}",
+            f"OCR: {tesseract}",
+            f"识别行数: {len(lines)}",
+        ]
+        rows.extend(
+            f"{index:03d}. ({line.left},{line.top},{line.right},{line.bottom}) {line.text}"
+            for index, line in enumerate(lines, 1)
+        )
+        self.log_text("\n".join(rows))
+        image_path.unlink(missing_ok=True)
+        output.rmdir()
+        self.status_var.set(f"识别完成，共 {len(lines)} 行，详情已输出")
 
     def _hotkey_parts(self, value: str) -> tuple[int, int]:
         names = [part.strip().upper() for part in value.replace(" ", "").split("+") if part.strip()]
