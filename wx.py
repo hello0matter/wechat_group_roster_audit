@@ -237,7 +237,7 @@ def left_pane_lines(
 def section_kind(text: str) -> str | None:
     normalized = open_group.normalize_text(text)
     raw_normalized = normalized
-    if normalized[:1] in {">", "v", "y"}:
+    if normalized[:1] in {">", "＞", "〉", "》", "﹥", "v", "y", "∨", "﹀", "︾", "↓"}:
         normalized = normalized[1:]
     if normalized in {"mostused", "最常使用"}:
         return "most_used"
@@ -388,8 +388,12 @@ def saved_groups_is_collapsed(
     an expanded section has at least one non-heading line in that interval.
     """
     label = heading.text.lstrip()
-    if label.startswith(">"):
+    # The disclosure glyph is authoritative: `>` means collapsed and `v`
+    # (including OCR's `V`/`Y` variants) means already expanded.
+    if re.match(r"^[>＞〉》﹥»]", label):
         return True
+    if re.match(r"^[vVyY∨﹀︾⌄⌄↓✔✓√]", label):
+        return False
     headings = [
         line for line in lines
         if section_kind(line.text) is not None and line.top > heading.bottom
@@ -435,10 +439,13 @@ def expand_saved_groups(
         return True
 
     # Click the discovered header row, not a hard-coded disclosure-arrow coordinate.
+    # Click the disclosure glyph itself. Clicking the row center can select a
+    # group entry on compact/resized contact panes instead of expanding it.
+    arrow_x = min(heading.right, heading.left + max(12, (heading.right - heading.left) // 3))
     point = screen_point_from_capture(
         window,
         full_image,
-        (heading.left + heading.right) // 2,
+        arrow_x,
         (heading.top + heading.bottom) // 2,
     )
     open_group.click_screen_point(point)

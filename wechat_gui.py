@@ -895,6 +895,7 @@ class App(tk.Tk):
             "WECHAT_MEMBER_TERM_TIMEOUT": str(self.member_term_timeout.get()),
             "WECHAT_GROUP_SEARCH_PREFIX": str(self.group_search_prefix.get()),
             "WECHAT_OCR_BACKEND": self.ocr_backend.get(),
+            "WECHAT_PADDLE_MODEL": "mobile",
             "WECHAT_CONFIG_FILE": str(CONFIG),
             "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),

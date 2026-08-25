@@ -423,6 +423,17 @@ class OpenGroupTests(unittest.TestCase):
 
     def test_section_kind_accepts_common_ocr_for_chinese_group_heading(self):
         self.assertEqual(wx.section_kind("v Bo"), "groups")
+        self.assertEqual(wx.section_kind("〉群聊"), "groups")
+
+    def test_disclosure_glyph_controls_saved_group_expansion_state(self):
+        collapsed = open_group.OcrLine(">群聊", 10, 20, 90, 40)
+        paddle_collapsed = open_group.OcrLine("〉群聊", 10, 20, 90, 40)
+        expanded = open_group.OcrLine("v群聊", 10, 20, 90, 40)
+        paddle_expanded = open_group.OcrLine("∨群聊", 10, 20, 90, 40)
+        self.assertTrue(wx.saved_groups_is_collapsed([collapsed], collapsed))
+        self.assertTrue(wx.saved_groups_is_collapsed([paddle_collapsed], paddle_collapsed))
+        self.assertFalse(wx.saved_groups_is_collapsed([expanded], expanded))
+        self.assertFalse(wx.saved_groups_is_collapsed([paddle_expanded], paddle_expanded))
 
     def test_counted_group_heading_is_collapsed_without_rows(self):
         heading = open_group.OcrLine("群聊 17", 10, 20, 90, 40)

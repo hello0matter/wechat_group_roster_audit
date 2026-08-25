@@ -253,11 +253,19 @@ def run_ocr(
 def _paddle_engine():
     from paddleocr import PaddleOCR
 
+    model_size = os.environ.get("WECHAT_PADDLE_MODEL", "mobile").lower()
+    model_kwargs = {}
+    if model_size == "mobile":
+        model_kwargs.update(
+            text_detection_model_name="PP-OCRv5_mobile_det",
+            text_recognition_model_name="PP-OCRv5_mobile_rec",
+        )
     return PaddleOCR(
         lang="ch",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
+        **model_kwargs,
     )
 
 
