@@ -210,6 +210,8 @@ def run_ocr(
         return run_paddle_ocr(image)
     if backend == "rapidocr":
         return run_rapid_ocr(image)
+    if backend in {"rapidocr_latest", "rapidocr-new"}:
+        return run_rapid_latest_ocr(image)
     command = [
         str(tesseract),
         str(image),
@@ -306,6 +308,25 @@ def run_rapid_ocr(image: Path) -> list[OcrLine]:
             continue
         points = [(int(point[0]), int(point[1])) for point in polygon]
         output.append(OcrLine(text, min(x for x, _ in points), min(y for _, y in points), max(x for x, _ in points), max(y for _, y in points)))
+    return output
+
+
+@lru_cache(maxsize=1)
+def _rapid_latest_engine():
+    from rapidocr import RapidOCR
+
+    return RapidOCR()
+
+
+def run_rapid_latest_ocr(image: Path) -> list[OcrLine]:
+    """Run RapidOCR 3.x using its PP-OCRv6 ONNX models."""
+    result = _rapid_latest_engine()(image)
+    output: list[OcrLine] = []
+    for polygon, text, score in zip(result.boxes, result.txts, result.scores):
+        if not str(text).strip() or float(score) < 0.2:
+            continue
+        points = [(int(point[0]), int(point[1])) for point in polygon]
+        output.append(OcrLine(str(text), min(x for x, _ in points), min(y for _, y in points), max(x for x, _ in points), max(y for _, y in points)))
     return output
 
 
