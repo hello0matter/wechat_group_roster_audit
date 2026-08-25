@@ -364,6 +364,9 @@ def open_named_group(
     )
     if match is None:
         raise RuntimeError("saved_group_not_found")
+    # Refresh the HWND rectangle immediately before mapping the row point;
+    # Weixin can be dragged or resized while OCR is running.
+    window = audit.select_weixin_window(int(window["pid"])) or window
     point = (
         int(window["left"]) + crop_offset[0] + (match.left + match.right) // 2,
         int(window["top"]) + crop_offset[1] + (match.top + match.bottom) // 2,
@@ -372,16 +375,18 @@ def open_named_group(
     time.sleep(wx.chat_open_delay())
     opened_path = directory / "opened.png"
     wx.capture_live_window(window, opened_path)
+    window = audit.select_weixin_window(int(window["pid"])) or window
     with Image.open(opened_path) as opened_image:
         button = wx.join_button_bbox(opened_image)
-        if button is not None:
-            cx = (button[0] + button[2]) / 2
-            cy = (button[1] + button[3]) / 2
-            open_group.click_screen_point(
-                wx.point_in_window(window, (cx / opened_image.width, cy / opened_image.height))
-            )
-            time.sleep(wx.chat_open_delay())
-            wx.capture_live_window(window, opened_path)
+        if button is None:
+            raise RuntimeError("group_preview_button_not_found")
+        cx = (button[0] + button[2]) / 2
+        cy = (button[1] + button[3]) / 2
+        open_group.click_screen_point(
+            wx.point_in_window(window, (cx / opened_image.width, cy / opened_image.height))
+        )
+        time.sleep(wx.chat_open_delay())
+        wx.capture_live_window(window, opened_path)
     if not wx.verify_opened_title(tesseract, opened_path, query):
         raise RuntimeError("opened_group_title_not_verified")
     return audit.select_weixin_window(int(window["pid"])) or window
