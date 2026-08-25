@@ -215,19 +215,35 @@ def run_ocr(
         "tsv",
     ]
     for attempt in range(2):
+        ocr_env = os.environ.copy()
+        # Tesseract on Windows otherwise inherits a legacy ANSI code page and
+        # replaces Chinese TSV text before it reaches Python.
+        ocr_env["LC_ALL"] = "C.UTF-8"
+        ocr_env["LANG"] = "C.UTF-8"
         result = subprocess.run(
             command,
             capture_output=True,
             check=False,
-            encoding="utf-8",
-            errors="replace",
+            env=ocr_env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode == 0:
-            return parse_tsv_lines(result.stdout)
+            raw_stdout = result.stdout
+            if isinstance(raw_stdout, bytes):
+                # Tesseract follows the active Windows code page on some
+                # installations and UTF-8 on others.  Replacement decoding
+                # made Chinese group names impossible to match.
+                try:
+                    raw_stdout = raw_stdout.decode("utf-8")
+                except UnicodeDecodeError:
+                    raw_stdout = raw_stdout.decode("gb18030", errors="replace")
+            return parse_tsv_lines(raw_stdout)
         if attempt == 0:
             time.sleep(0.25)
-    raise RuntimeError(result.stderr.strip() or f"tesseract exited {result.returncode}")
+    raw_stderr = result.stderr
+    if isinstance(raw_stderr, bytes):
+        raw_stderr = raw_stderr.decode("utf-8", errors="replace")
+    raise RuntimeError(raw_stderr.strip() or f"tesseract exited {result.returncode}")
 
 
 def gui_thread_handles() -> tuple[int, int, int]:
