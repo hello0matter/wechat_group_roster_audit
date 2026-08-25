@@ -353,7 +353,44 @@ def weixin_has_keyboard_focus(hwnd: int) -> bool:
 def open_named_group(
     window: dict[str, object], query: str, directory: Path, tesseract: Path
 ) -> dict[str, object]:
-    """Open one group from global search without accepting non-group results."""
+    """Open a saved group directly from Contacts, avoiding global search."""
+    open_group.click_screen_point(wx.sidebar_point(window, wx.CONTACTS_NAV))
+    time.sleep(wx.navigation_delay())
+    wx.scroll_list_to_top(window)
+    if not wx.expand_saved_groups(window, tesseract, directory):
+        raise RuntimeError("saved_groups_not_visible")
+    match, crop_offset, _ocr_seconds, _screenshots = wx.find_saved_group(
+        window, query, directory, wx.MAX_PAGES, tesseract
+    )
+    if match is None:
+        raise RuntimeError("saved_group_not_found")
+    point = (
+        int(window["left"]) + crop_offset[0] + (match.left + match.right) // 2,
+        int(window["top"]) + crop_offset[1] + (match.top + match.bottom) // 2,
+    )
+    open_group.click_screen_point(point)
+    time.sleep(wx.chat_open_delay())
+    opened_path = directory / "opened.png"
+    wx.capture_live_window(window, opened_path)
+    with Image.open(opened_path) as opened_image:
+        button = wx.join_button_bbox(opened_image)
+        if button is not None:
+            cx = (button[0] + button[2]) / 2
+            cy = (button[1] + button[3]) / 2
+            open_group.click_screen_point(
+                wx.point_in_window(window, (cx / opened_image.width, cy / opened_image.height))
+            )
+            time.sleep(wx.chat_open_delay())
+            wx.capture_live_window(window, opened_path)
+    if not wx.verify_opened_title(tesseract, opened_path, query):
+        raise RuntimeError("opened_group_title_not_verified")
+    return audit.select_weixin_window(int(window["pid"])) or window
+
+
+def open_named_group_global_search(
+    window: dict[str, object], query: str, directory: Path, tesseract: Path
+) -> dict[str, object]:
+    """Fallback global-search opener retained for non-saved-group callers."""
     prefix_length = wx.group_search_prefix()
     compact_query = "".join(query.split())
     search_query = (
