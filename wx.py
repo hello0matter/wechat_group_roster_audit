@@ -513,6 +513,15 @@ def capture_live_window(
     # A blank Qt surface is recoverable by the same one-cycle taskbar action
     # users perform manually. Retry once before any OCR or mouse operation.
     if max(ImageStat.Stat(image.convert("RGB")).stddev) < 1.0:
+        if all(key in window for key in ("left", "top", "width", "height")):
+            repaint_point = point_in_window(window, (0.78, 0.52))
+            open_group.click_screen_point(repaint_point)
+            open_group.click_screen_point(repaint_point)
+            time.sleep(0.35)
+            open_group.desktop_window_capture(window, output)
+            with Image.open(output) as captured:
+                image = captured.copy()
+    if max(ImageStat.Stat(image.convert("RGB")).stddev) < 1.0:
         if audit.recover_blank_surface(window):
             open_group.desktop_window_capture(window, output)
             with Image.open(output) as captured:
@@ -542,11 +551,29 @@ def saved_group_preview_state(image: Image.Image) -> str:
     right = round(width * JOIN_BUTTON_REGION[2])
     bottom = round(height * JOIN_BUTTON_REGION[3])
     crop = image.crop((left, top, right, bottom)).convert("RGB")
-    green_pixels = sum(
-        red < 90 and green > 130 and blue < 150 and green - red > 70 and green - blue > 30
-        for red, green, blue in crop.getdata()
-    )
-    return "join_group" if green_pixels >= MIN_JOIN_BUTTON_GREEN_PIXELS else "unknown"
+    return "join_group" if join_button_bbox(image) is not None else "unknown"
+
+
+def join_button_bbox(image: Image.Image) -> tuple[int, int, int, int] | None:
+    """Return the dynamic green-button bounds in a saved-group preview."""
+    width, height = image.size
+    left = round(width * JOIN_BUTTON_REGION[0])
+    top = round(height * JOIN_BUTTON_REGION[1])
+    right = round(width * JOIN_BUTTON_REGION[2])
+    bottom = round(height * JOIN_BUTTON_REGION[3])
+    points = [
+        (x, y)
+        for y in range(top, bottom, 2)
+        for x in range(left, right, 2)
+        if (lambda rgb: rgb[0] < 90 and rgb[1] > 130 and rgb[2] < 150)(
+            image.getpixel((x, y))[:3]
+        )
+    ]
+    if len(points) < MIN_JOIN_BUTTON_GREEN_PIXELS // 4:
+        return None
+    xs, ys = zip(*points)
+    bbox = (min(xs), min(ys), max(xs), max(ys))
+    return bbox if bbox[2] - bbox[0] >= 40 and bbox[3] - bbox[1] >= 20 else None
 
 
 def click_result_and_verify_chat(
