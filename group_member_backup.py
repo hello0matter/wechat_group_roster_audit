@@ -355,7 +355,12 @@ def open_named_group(
 ) -> dict[str, object]:
     """Open one group from global search without accepting non-group results."""
     prefix_length = wx.group_search_prefix()
-    search_query = query[:prefix_length] if prefix_length and len(query) > prefix_length else query
+    compact_query = "".join(query.split())
+    search_query = (
+        compact_query[:prefix_length]
+        if prefix_length and len(compact_query) > prefix_length
+        else compact_query
+    )
     open_group.click_screen_point(wx.sidebar_point(window, wx.CHAT_NAV))
     time.sleep(wx.NAVIGATION_WAIT_SECONDS)
     open_group.focus_global_search(window)

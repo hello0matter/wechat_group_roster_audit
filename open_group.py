@@ -389,17 +389,29 @@ def send_trusted_keys(
 
 
 def focus_global_search(window: dict[str, object]) -> None:
-    """Focus Weixin search through Windows' signed UIAccess keyboard."""
-    send_trusted_keys(window, [(0.065, 0.92), (0.252, 0.62)])
+    """Focus the Weixin search box without opening the on-screen keyboard."""
+    point = (
+        int(window["left"]) + round(int(window["width"]) * SEARCH_X_RATIO),
+        int(window["top"]) + round(int(window["height"]) * SEARCH_Y_RATIO),
+    )
+    click_screen_point(point)
+    time.sleep(0.2)
 
 
 def open_search_result_with_keyboard(
     window: dict[str, object], selection_index: int
 ) -> None:
-    """Choose a focused Weixin search result without clicking its overlay."""
-    down = (0.595, 0.92)
-    enter = (0.653, 0.62)
-    send_trusted_keys(window, [down] * selection_index + [enter])
+    """Choose a focused Weixin search result using native key events."""
+    activation = audit.activate_window(window)
+    if not activation["activated"]:
+        raise RuntimeError("weixin_activation_failed")
+    for _ in range(max(0, selection_index)):
+        win32api.keybd_event(win32con.VK_DOWN, 0, 0, 0)
+        win32api.keybd_event(win32con.VK_DOWN, 0, win32con.KEYEVENTF_KEYUP, 0)
+        time.sleep(0.04)
+    win32api.keybd_event(win32con.VK_RETURN, 0, 0, 0)
+    win32api.keybd_event(win32con.VK_RETURN, 0, win32con.KEYEVENTF_KEYUP, 0)
+    time.sleep(0.2)
 
 
 def set_cursor_pos(point: tuple[int, int]) -> None:
