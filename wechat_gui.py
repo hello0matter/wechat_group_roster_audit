@@ -571,7 +571,8 @@ class App(tk.Tk):
         rows = [
             f"窗口: PID={window.get('pid')} 位置=({window.get('left')},{window.get('top')}) "
             f"大小={window.get('width')}x{window.get('height')}",
-            f"OCR: {self.ocr_backend.get()} ({tesseract or f'PaddleOCR {self.paddle_model.get()} 模型'})",
+            f"OCR: {self.ocr_backend.get()} ("
+            f"{('PaddleOCR ' + self.paddle_model.get() + ' 模型') if self.ocr_backend.get() == 'paddle' else tesseract})",
             f"识别行数: {len(lines)}",
         ]
         rows.extend(

@@ -237,7 +237,7 @@ def left_pane_lines(
 def section_kind(text: str) -> str | None:
     normalized = open_group.normalize_text(text)
     raw_normalized = normalized
-    if normalized[:1] in {">", "＞", "〉", "》", "﹥", "v", "y", "∨", "﹀", "︾", "↓"}:
+    if normalized[:1] in {">", "＞", "〉", "》", "﹥", "v", "y", "∨", "﹀", "︾", "↓", "✔", "✓", "√"}:
         normalized = normalized[1:]
     if normalized in {"mostused", "最常使用"}:
         return "most_used"

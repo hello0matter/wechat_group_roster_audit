@@ -424,6 +424,7 @@ class OpenGroupTests(unittest.TestCase):
     def test_section_kind_accepts_common_ocr_for_chinese_group_heading(self):
         self.assertEqual(wx.section_kind("v Bo"), "groups")
         self.assertEqual(wx.section_kind("〉群聊"), "groups")
+        self.assertEqual(wx.section_kind("✔群聊"), "groups")
 
     def test_disclosure_glyph_controls_saved_group_expansion_state(self):
         collapsed = open_group.OcrLine(">群聊", 10, 20, 90, 40)
