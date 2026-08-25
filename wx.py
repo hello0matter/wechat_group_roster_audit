@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import os
 import re
@@ -1253,6 +1254,26 @@ def find_saved_group(
                 ),
                 None,
             )
+            if match is None:
+                # OCR may prepend avatar noise or insert spaces between
+                # Chinese characters (for example ``gag 宝安 人 民 医 院``).
+                query_cjk = "".join(re.findall(r"[\u4e00-\u9fff]", query))
+                if len(query_cjk) >= 2:
+                    scored: list[tuple[float, open_group.OcrLine]] = []
+                    for line in lines:
+                        if line.top <= start_top or (end_top is not None and line.top >= end_top):
+                            continue
+                        line_cjk = "".join(re.findall(r"[\u4e00-\u9fff]", line.text))
+                        if not line_cjk:
+                            continue
+                        score = difflib.SequenceMatcher(None, query_cjk, line_cjk).ratio()
+                        if query_cjk in line_cjk:
+                            score += 0.35
+                        scored.append((score, line))
+                    if scored:
+                        best_score, best_line = max(scored, key=lambda item: item[0])
+                        if best_score >= 0.55:
+                            match = best_line
             if match is None:
                 started = time.perf_counter()
                 match = find_saved_group_in_expanded_text(
