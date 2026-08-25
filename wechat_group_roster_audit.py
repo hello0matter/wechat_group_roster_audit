@@ -267,12 +267,30 @@ def recover_blank_surface(window: dict[str, object]) -> bool:
     hwnd = int(window["hwnd"])
     if not win32gui.IsWindow(hwnd):
         return False
+    # This mirrors clicking the taskbar button: a real minimize/restore
+    # transition followed by activation and a client-area redraw. Qt/Weixin
+    # may ignore a single SetForegroundWindow while its surface is blank.
     USER32.ShowWindow(hwnd, win32con.SW_MINIMIZE)
-    time.sleep(0.25)
+    time.sleep(0.22)
     USER32.PostMessageW(hwnd, win32con.WM_SYSCOMMAND, win32con.SC_RESTORE, 0)
-    time.sleep(0.8)
+    time.sleep(0.35)
+    USER32.ShowWindow(hwnd, win32con.SW_RESTORE)
     USER32.BringWindowToTop(hwnd)
     USER32.SetForegroundWindow(hwnd)
+    try:
+        win32gui.SendMessage(hwnd, win32con.WM_NCACTIVATE, 1, 0)
+        win32gui.RedrawWindow(
+            hwnd,
+            None,
+            None,
+            win32con.RDW_INVALIDATE
+            | win32con.RDW_ERASE
+            | win32con.RDW_UPDATENOW
+            | win32con.RDW_ALLCHILDREN,
+        )
+    except win32gui.error:
+        pass
+    time.sleep(0.65)
     return win32gui.GetForegroundWindow() == hwnd
 
 
