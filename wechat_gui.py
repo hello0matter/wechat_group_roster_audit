@@ -149,7 +149,7 @@ class App(tk.Tk):
         self.member_pages = tk.IntVar(value=int(self.config_data.get("member_pages", 1000)))
         self.member_term_timeout = tk.DoubleVar(value=float(self.config_data.get("member_term_timeout", 40.0)))
         self.group_search_prefix = tk.IntVar(value=int(self.config_data.get("group_search_prefix", 4)))
-        self.ocr_backend = tk.StringVar(value=str(self.config_data.get("ocr_backend", "tesseract")))
+        self.ocr_backend = tk.StringVar(value=str(self.config_data.get("ocr_backend", "paddle")))
         self.click_delay = tk.DoubleVar(value=float(self.config_data.get("click_delay", 0.06)))
         self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.15)))
         self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))
@@ -543,17 +543,25 @@ class App(tk.Tk):
             messagebox.showwarning("测试识别", "未找到可见的微信窗口。")
             return
         tesseract = open_group.resolve_tesseract(None)
-        if tesseract is None:
+        if tesseract is None and self.ocr_backend.get() == "tesseract":
             messagebox.showerror("测试识别", "未找到 Tesseract OCR。")
             return
         output = Path(tempfile.mkdtemp(prefix="wechat-ocr-"))
         image_path = output / "screen.png"
         image, _ = wx.capture_live_window(window, image_path)
-        lines = open_group.run_ocr(tesseract, image_path, psm=11, language="chi_sim+eng")
+        previous_backend = os.environ.get("WECHAT_OCR_BACKEND")
+        os.environ["WECHAT_OCR_BACKEND"] = self.ocr_backend.get()
+        try:
+            lines = open_group.run_ocr(tesseract or Path("tesseract"), image_path, psm=11, language="chi_sim+eng")
+        finally:
+            if previous_backend is None:
+                os.environ.pop("WECHAT_OCR_BACKEND", None)
+            else:
+                os.environ["WECHAT_OCR_BACKEND"] = previous_backend
         rows = [
             f"窗口: PID={window.get('pid')} 位置=({window.get('left')},{window.get('top')}) "
             f"大小={window.get('width')}x{window.get('height')}",
-            f"OCR: {tesseract}",
+            f"OCR: {self.ocr_backend.get()} ({tesseract or 'PaddleOCR 本地模型'})",
             f"识别行数: {len(lines)}",
         ]
         rows.extend(
