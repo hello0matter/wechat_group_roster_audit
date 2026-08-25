@@ -24,11 +24,13 @@ class IncrementalWebDavUploader(IncrementalArtifactUploader):
         remark: str = "微信备份",
         remote_folder: str | None = None,
         interval: float = 1.5,
+        proxies: dict[str, str] | None = None,
     ) -> None:
         super().__init__(root, remark=remark, remote_folder=remote_folder, interval=interval)
         self.url = url.rstrip("/")
         self.user = user
         self.secret = secret
+        self.proxies = proxies or {}
 
     def start(self) -> None:
         if not self.url:
@@ -62,6 +64,7 @@ class IncrementalWebDavUploader(IncrementalArtifactUploader):
             headers={**self._headers(), "Depth": "0"},
             auth=self._auth(),
             timeout=30,
+            proxies=self.proxies,
         )
         if response.status_code not in {200, 207}:
             raise RuntimeError(f"HTTP {response.status_code} {response.reason}")
@@ -92,6 +95,7 @@ class IncrementalWebDavUploader(IncrementalArtifactUploader):
             headers=self._headers(size),
             auth=self._auth(),
             timeout=90,
+            proxies=self.proxies,
         )
         if response.status_code not in {200, 201, 204, 207, 405, 409}:
             raise RuntimeError(f"HTTP {response.status_code} {response.reason}")
@@ -114,6 +118,7 @@ class IncrementalWebDavUploader(IncrementalArtifactUploader):
                 headers=self._headers(size),
                 auth=self._auth(),
                 timeout=300,
+                proxies=self.proxies,
             )
         if response.status_code not in {200, 201, 204}:
             raise RuntimeError(f"HTTP {response.status_code} {response.reason}")

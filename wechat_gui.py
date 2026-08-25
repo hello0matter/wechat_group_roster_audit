@@ -481,6 +481,7 @@ class App(tk.Tk):
                     secret=secret,
                     remark=self.cloud_remark.get().strip(),
                     interval=self.cloud_interval.get(),
+                    proxies=self._box_proxies(),
                 )
                 uploader.test_connection()
                 message = "WebDAV \u8fde\u63a5\u6210\u529f\u3002"
@@ -781,6 +782,7 @@ class App(tk.Tk):
                         remark=remark,
                         remote_folder=run_name,
                         interval=self.cloud_interval.get(),
+                        proxies=self._box_proxies(),
                     )
                 else:
                     uploader = IncrementalBoxUploader(
