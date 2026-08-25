@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from functools import lru_cache
 from datetime import datetime, timezone
 from collections import defaultdict
 from ctypes import wintypes
@@ -204,6 +205,8 @@ def run_ocr(
     psm: int = 11,
     language: str = "chi_sim+eng",
 ) -> list[OcrLine]:
+    if os.environ.get("WECHAT_OCR_BACKEND", "tesseract").lower() == "paddle":
+        return run_paddle_ocr(image)
     command = [
         str(tesseract),
         str(image),
@@ -244,6 +247,33 @@ def run_ocr(
     if isinstance(raw_stderr, bytes):
         raw_stderr = raw_stderr.decode("utf-8", errors="replace")
     raise RuntimeError(raw_stderr.strip() or f"tesseract exited {result.returncode}")
+
+
+@lru_cache(maxsize=1)
+def _paddle_engine():
+    from paddleocr import PaddleOCR
+
+    return PaddleOCR(
+        lang="ch",
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+    )
+
+
+def run_paddle_ocr(image: Path) -> list[OcrLine]:
+    """Run PaddleOCR and normalize its polygon result to the local OCR type."""
+    output: list[OcrLine] = []
+    for result in _paddle_engine().predict(str(image)):
+        texts = result.get("rec_texts", [])
+        boxes = result.get("rec_boxes", [])
+        scores = result.get("rec_scores", [])
+        for text, box, score in zip(texts, boxes, scores):
+            if not str(text).strip() or float(score) < 0.2:
+                continue
+            coordinates = [int(value) for value in box]
+            output.append(OcrLine(str(text), min(coordinates[0::2]), min(coordinates[1::2]), max(coordinates[0::2]), max(coordinates[1::2])))
+    return output
 
 
 def gui_thread_handles() -> tuple[int, int, int]:
