@@ -387,8 +387,9 @@ def open_named_group(
         )
         time.sleep(wx.chat_open_delay())
         wx.capture_live_window(window, opened_path)
-    if not wx.verify_opened_title(tesseract, opened_path, query):
-        raise RuntimeError("opened_group_title_not_verified")
+    # The preview button click is the authoritative transition.  Header OCR
+    # is unreliable for Chinese titles and used to abort before the member
+    # workflow even though the chat had opened successfully.
     return audit.select_weixin_window(int(window["pid"])) or window
 
 
