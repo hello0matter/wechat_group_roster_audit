@@ -1367,7 +1367,6 @@ def main() -> int:
         if not expand_contacts(window, args.o, tesseract):
             print("未找到或无法展开 Contacts/联系人分区。")
             return 3
-        scroll_list_to_top(window)
         for stale in args.o.glob("contact-*.png"):
             stale.unlink(missing_ok=True)
         outputs, stop_reason = save_contact_detail_pages(window, args.o, args.s, tesseract)

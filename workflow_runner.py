@@ -199,7 +199,6 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             window = activation["window"]
         open_group.click_screen_point(wx.sidebar_point(window, wx.CONTACTS_NAV))
         time.sleep(wx.NAVIGATION_WAIT_SECONDS)
-        wx.scroll_list_to_top(window)
         expanded = wx.expand_contacts(window, contacts_dir, tesseract)
         if expanded:
             pages, reason = wx.save_contact_detail_pages(
