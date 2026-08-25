@@ -22,7 +22,7 @@ import wx
 DEFAULT_TERMS = ("1",) + tuple(string.ascii_lowercase)
 # The member search field is the wide box at the top of the right member pane.
 # Keep the point inside its center; a lower point lands on the first avatar.
-GROUP_SEARCH_POINT = (0.82, 0.15)
+GROUP_SEARCH_POINT = (0.84, 0.19)
 GROUP_RESULT_SCROLL_POINT = (0.79, 0.72)
 PROFILE_DISMISS_POINT = (0.50, 0.72)
 RESULT_PANEL = (0.60, 0.18, 0.94, 0.96)
