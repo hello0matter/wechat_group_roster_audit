@@ -20,7 +20,10 @@ import wx
 
 
 DEFAULT_TERMS = ("1",) + tuple(string.ascii_lowercase)
-GROUP_SEARCH_POINT = (0.80, 0.15)
+# The member search field begins just to the right of the conversation pane;
+# use its left-center rather than the far right, which can fall through to the
+# chat composer on narrow/resized windows.
+GROUP_SEARCH_POINT = (0.72, 0.18)
 GROUP_RESULT_SCROLL_POINT = (0.79, 0.72)
 PROFILE_DISMISS_POINT = (0.50, 0.72)
 RESULT_PANEL = (0.60, 0.18, 0.94, 0.96)
@@ -249,9 +252,18 @@ def replace_search_text(window: dict[str, object], value: str) -> None:
     # background is not reliably green. The click itself is the reliable
     # focus operation; capture the probe for audit, then type regardless of
     # the heuristic focus check.
+    # Opening the member pane can move/repaint the Qt surface. Refresh the
+    # HWND rectangle immediately before the click so a dragged/resized window
+    # cannot send the keystrokes to the chat composer.
+    window = audit.select_weixin_window(int(window["pid"])) or window
     point = wx.point_in_window(window, GROUP_SEARCH_POINT)
     open_group.click_screen_point(point)
-    time.sleep(0.15)
+    time.sleep(0.35)
+    # A second click is intentional: on some Weixin builds the first click
+    # only activates the settings pane while the edit control is still being
+    # created.
+    open_group.click_screen_point(point)
+    time.sleep(0.2)
     debug_step(
         Path("artifacts/group-member-debug"),
         "search-focused",
@@ -568,7 +580,7 @@ def prepare_group_member_search(
             int(window["top"]) + 84,
         )
         open_group.click_screen_point(point)
-        time.sleep(SETTINGS_WAIT_SECONDS + attempt * 0.2)
+        time.sleep(max(0.8, SETTINGS_WAIT_SECONDS + attempt * 0.2))
         window = audit.select_weixin_window(int(window["pid"])) or window
         image, _ = wx.capture_live_window(window, probe)
         lines = open_group.run_ocr(tesseract, probe, psm=11, language="chi_sim+eng")
