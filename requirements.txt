@@ -4,3 +4,4 @@ pywin32==311
 pywinauto==0.6.9
 requests>=2.31,<3
 PySocks>=1.7.1,<2
+rapidocr-onnxruntime==1.4.4

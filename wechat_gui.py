@@ -345,7 +345,7 @@ class App(tk.Tk):
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             if variable is self.ocr_backend:
-                ttk.Combobox(body, textvariable=variable, values=("tesseract", "paddle"), state="readonly", width=12).grid(row=row, column=1, padx=10, pady=4)
+                ttk.Combobox(body, textvariable=variable, values=("tesseract", "paddle", "rapidocr"), state="readonly", width=12).grid(row=row, column=1, padx=10, pady=4)
             elif variable is self.paddle_model:
                 ttk.Combobox(body, textvariable=variable, values=("mobile", "server"), state="readonly", width=12).grid(row=row, column=1, padx=10, pady=4)
             else:
@@ -572,7 +572,7 @@ class App(tk.Tk):
             f"窗口: PID={window.get('pid')} 位置=({window.get('left')},{window.get('top')}) "
             f"大小={window.get('width')}x{window.get('height')}",
             f"OCR: {self.ocr_backend.get()} ("
-            f"{('PaddleOCR ' + self.paddle_model.get() + ' 模型') if self.ocr_backend.get() == 'paddle' else tesseract})",
+            f"{('PaddleOCR ' + self.paddle_model.get() + ' 模型') if self.ocr_backend.get() == 'paddle' else ('RapidOCR ONNX' if self.ocr_backend.get() == 'rapidocr' else tesseract)})",
             f"识别行数: {len(lines)}",
         ]
         rows.extend(

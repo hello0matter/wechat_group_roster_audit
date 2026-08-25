@@ -205,8 +205,11 @@ def run_ocr(
     psm: int = 11,
     language: str = "chi_sim+eng",
 ) -> list[OcrLine]:
-    if os.environ.get("WECHAT_OCR_BACKEND", "tesseract").lower() == "paddle":
+    backend = os.environ.get("WECHAT_OCR_BACKEND", "tesseract").lower()
+    if backend == "paddle":
         return run_paddle_ocr(image)
+    if backend == "rapidocr":
+        return run_rapid_ocr(image)
     command = [
         str(tesseract),
         str(image),
@@ -281,6 +284,28 @@ def run_paddle_ocr(image: Path) -> list[OcrLine]:
                 continue
             coordinates = [int(value) for value in box]
             output.append(OcrLine(str(text), min(coordinates[0::2]), min(coordinates[1::2]), max(coordinates[0::2]), max(coordinates[1::2])))
+    return output
+
+
+@lru_cache(maxsize=1)
+def _rapid_engine():
+    from rapidocr_onnxruntime import RapidOCR
+
+    return RapidOCR()
+
+
+def run_rapid_ocr(image: Path) -> list[OcrLine]:
+    """Run the lightweight ONNX RapidOCR backend."""
+    result, _ = _rapid_engine()(str(image))
+    output: list[OcrLine] = []
+    for item in result or []:
+        if len(item) < 3:
+            continue
+        polygon, text, score = item[0], str(item[1]), float(item[2])
+        if not text.strip() or score < 0.2:
+            continue
+        points = [(int(point[0]), int(point[1])) for point in polygon]
+        output.append(OcrLine(text, min(x for x, _ in points), min(y for _, y in points), max(x for x, _ in points), max(y for _, y in points)))
     return output
 
 
