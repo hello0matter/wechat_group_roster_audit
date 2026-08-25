@@ -150,6 +150,7 @@ class App(tk.Tk):
         self.member_term_timeout = tk.DoubleVar(value=float(self.config_data.get("member_term_timeout", 40.0)))
         self.group_search_prefix = tk.IntVar(value=int(self.config_data.get("group_search_prefix", 4)))
         self.ocr_backend = tk.StringVar(value=str(self.config_data.get("ocr_backend", "paddle")))
+        self.paddle_model = tk.StringVar(value=str(self.config_data.get("paddle_model", "mobile")))
         self.click_delay = tk.DoubleVar(value=float(self.config_data.get("click_delay", 0.06)))
         self.scroll_delay = tk.DoubleVar(value=float(self.config_data.get("scroll_delay", 0.15)))
         self.profile_delay = tk.DoubleVar(value=float(self.config_data.get("profile_delay", 0.55)))
@@ -294,6 +295,7 @@ class App(tk.Tk):
             "member_term_timeout": self.member_term_timeout.get(),
             "group_search_prefix": self.group_search_prefix.get(),
             "ocr_backend": self.ocr_backend.get(),
+            "paddle_model": self.paddle_model.get(),
             "click_delay": self.click_delay.get(),
             "scroll_delay": self.scroll_delay.get(),
             "profile_delay": self.profile_delay.get(),
@@ -339,11 +341,13 @@ class App(tk.Tk):
         dialog.grab_set()
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill="both", expand=True)
-        rows = (("OCR 引擎", self.ocr_backend), ("\u70b9\u51fb\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.click_delay), ("\u6eda\u52a8\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.scroll_delay), ("\u6253\u5f00\u4f1a\u8bdd\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.chat_open_delay), ("\u6253\u5f00\u8d44\u6599\u5361\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.profile_delay), ("\u8fd4\u56de/\u5bfc\u822a\u7b49\u5f85\uff08\u79d2\uff09", self.navigation_delay), ("\u8bbe\u7f6e\u9762\u677f\u7b49\u5f85\uff08\u79d2\uff09", self.settings_delay), ("\u6700\u8fd1\u4f1a\u8bdd\u6eda\u52a8\u91cf", self.recent_scroll_delta), ("\u7fa4\u6210\u5458\u6eda\u52a8\u8ddd\u79bb", self.member_scroll_delta), ("\u5355\u4e2a\u641c\u7d22\u8bcd\u8d85\u65f6\uff08\u79d2\uff09", self.member_term_timeout), ("\u7fa4\u540d\u641c\u7d22\u524d\u7f00\u5b57\u7b26\u6570", self.group_search_prefix))
+        rows = (("OCR 引擎", self.ocr_backend), ("PaddleOCR 模型", self.paddle_model), ("\u70b9\u51fb\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.click_delay), ("\u6eda\u52a8\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.scroll_delay), ("\u6253\u5f00\u4f1a\u8bdd\u540e\u7b49\u5f85\uff08\u79d2\uff09", self.chat_open_delay), ("\u6253\u5f00\u8d44\u6599\u5361\u540e\u5ef6\u8fdf\uff08\u79d2\uff09", self.profile_delay), ("\u8fd4\u56de/\u5bfc\u822a\u7b49\u5f85\uff08\u79d2\uff09", self.navigation_delay), ("\u8bbe\u7f6e\u9762\u677f\u7b49\u5f85\uff08\u79d2\uff09", self.settings_delay), ("\u6700\u8fd1\u4f1a\u8bdd\u6eda\u52a8\u91cf", self.recent_scroll_delta), ("\u7fa4\u6210\u5458\u6eda\u52a8\u8ddd\u79bb", self.member_scroll_delta), ("\u5355\u4e2a\u641c\u7d22\u8bcd\u8d85\u65f6\uff08\u79d2\uff09", self.member_term_timeout), ("\u7fa4\u540d\u641c\u7d22\u524d\u7f00\u5b57\u7b26\u6570", self.group_search_prefix))
         for row, (label, variable) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", pady=4)
             if variable is self.ocr_backend:
                 ttk.Combobox(body, textvariable=variable, values=("tesseract", "paddle"), state="readonly", width=12).grid(row=row, column=1, padx=10, pady=4)
+            elif variable is self.paddle_model:
+                ttk.Combobox(body, textvariable=variable, values=("mobile", "server"), state="readonly", width=12).grid(row=row, column=1, padx=10, pady=4)
             else:
                 ttk.Entry(body, textvariable=variable, width=12).grid(row=row, column=1, padx=10, pady=4)
         strategy_row = len(rows)
@@ -550,7 +554,9 @@ class App(tk.Tk):
         image_path = output / "screen.png"
         image, _ = wx.capture_live_window(window, image_path)
         previous_backend = os.environ.get("WECHAT_OCR_BACKEND")
+        previous_model = os.environ.get("WECHAT_PADDLE_MODEL")
         os.environ["WECHAT_OCR_BACKEND"] = self.ocr_backend.get()
+        os.environ["WECHAT_PADDLE_MODEL"] = self.paddle_model.get()
         try:
             lines = open_group.run_ocr(tesseract or Path("tesseract"), image_path, psm=11, language="chi_sim+eng")
         finally:
@@ -558,10 +564,14 @@ class App(tk.Tk):
                 os.environ.pop("WECHAT_OCR_BACKEND", None)
             else:
                 os.environ["WECHAT_OCR_BACKEND"] = previous_backend
+            if previous_model is None:
+                os.environ.pop("WECHAT_PADDLE_MODEL", None)
+            else:
+                os.environ["WECHAT_PADDLE_MODEL"] = previous_model
         rows = [
             f"窗口: PID={window.get('pid')} 位置=({window.get('left')},{window.get('top')}) "
             f"大小={window.get('width')}x{window.get('height')}",
-            f"OCR: {self.ocr_backend.get()} ({tesseract or 'PaddleOCR 本地模型'})",
+            f"OCR: {self.ocr_backend.get()} ({tesseract or f'PaddleOCR {self.paddle_model.get()} 模型'})",
             f"识别行数: {len(lines)}",
         ]
         rows.extend(
@@ -895,7 +905,7 @@ class App(tk.Tk):
             "WECHAT_MEMBER_TERM_TIMEOUT": str(self.member_term_timeout.get()),
             "WECHAT_GROUP_SEARCH_PREFIX": str(self.group_search_prefix.get()),
             "WECHAT_OCR_BACKEND": self.ocr_backend.get(),
-            "WECHAT_PADDLE_MODEL": "mobile",
+            "WECHAT_PADDLE_MODEL": self.paddle_model.get(),
             "WECHAT_CONFIG_FILE": str(CONFIG),
             "WECHAT_LIST_IF_ID": "1" if self.list_if_id.get() else "0",
             "WECHAT_GROUP_ERROR_POLICY": self.group_error_policy.get(),
